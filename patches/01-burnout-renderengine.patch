@@ -1,0 +1,709 @@
+diff --git a/libs/renderengine/Android.bp b/libs/renderengine/Android.bp
+index 847a88662b..cded668b33 100644
+--- a/libs/renderengine/Android.bp
++++ b/libs/renderengine/Android.bp
+@@ -39,6 +39,7 @@ cc_defaults {
+         "libGLESv1_CM",
+         "libGLESv2",
+         "libgui",
++        "libjsoncpp",
+         "liblog",
+         "libnativewindow",
+         "libprocessgroup",
+@@ -109,6 +110,7 @@ filegroup {
+         "skia/debug/SkiaCapture.cpp",
+         "skia/debug/SkiaMemoryReporter.cpp",
+         "skia/filters/BlurFilter.cpp",
++        "skia/filters/BurnoutFilter.cpp",
+         "skia/filters/EdgeExtensionShaderFactory.cpp",
+         "skia/filters/GainmapFactory.cpp",
+         "skia/filters/GaussianBlurFilter.cpp",
+diff --git a/libs/renderengine/skia/SkiaRenderEngine.cpp b/libs/renderengine/skia/SkiaRenderEngine.cpp
+index daa0ecc471..486bf60b09 100644
+--- a/libs/renderengine/skia/SkiaRenderEngine.cpp
++++ b/libs/renderengine/skia/SkiaRenderEngine.cpp
+@@ -49,6 +49,7 @@
+ #include <SkString.h>
+ #include <SkSurface.h>
+ #include <SkTileMode.h>
++#include <android-base/properties.h>
+ #include <android-base/stringprintf.h>
+ #include <common/FlagManager.h>
+ #include <common/trace.h>
+@@ -58,6 +59,9 @@
+ #include <include/gpu/ganesh/GrTypes.h>
+ #include <include/gpu/ganesh/SkSurfaceGanesh.h>
+ #include <pthread.h>
++#include <sys/system_properties.h>
++#include <chrono>
++#include <thread>
+ #include <src/core/SkTraceEventCommon.h>
+ #include <sync/sync.h>
+ #include <ui/BlurRegion.h>
+@@ -354,6 +358,38 @@ SkiaRenderEngine::SkiaRenderEngine(Threaded threaded, PixelFormat pixelFormat,
+     }
+ 
+     mCapture = std::make_unique<SkiaCapture>();
++
++    // Burn-out correction: construct the filter (compiles SkSL once) and do an
++    // initial config load. Failure is non-fatal — the filter silently no-ops.
++    mBurnoutFilter = std::make_unique<BurnoutFilter>();
++    mBurnoutFilter->reload();
++
++    // Spawn a property-watcher thread for sys.burnout.reload. When the user
++    // writes any value to that prop (e.g. via push-burnout-config.sh), the
++    // filter reloads mask + zones from /data/burnout/.
++    mBurnoutReloadThread = std::thread([this] {
++        const prop_info* pi = __system_property_find("sys.burnout.reload");
++        uint32_t serial = pi ? __system_property_serial(pi) : 0;
++        while (!mBurnoutReloadStop.load(std::memory_order_relaxed)) {
++            // Re-find the prop_info on each iteration in case the property
++            // did not exist at construction time.
++            pi = __system_property_find("sys.burnout.reload");
++            if (pi == nullptr) {
++                // Property not yet set; poll every 2 seconds.
++                std::this_thread::sleep_for(std::chrono::seconds(2));
++                continue;
++            }
++            uint32_t newSerial = 0;
++            struct timespec timeout = {2, 0};  // 2-second timeout so we check stop flag
++            __system_property_wait(pi, serial, &newSerial, &timeout);
++            if (mBurnoutReloadStop.load(std::memory_order_relaxed)) break;
++            if (newSerial != serial) {
++                serial = newSerial;
++                ALOGI("BurnoutFilter: sys.burnout.reload changed, reloading config");
++                if (mBurnoutFilter) mBurnoutFilter->reload();
++            }
++        }
++    });
+ }
+ 
+ SkiaRenderEngine::~SkiaRenderEngine() { }
+@@ -361,11 +397,19 @@ SkiaRenderEngine::~SkiaRenderEngine() { }
+ // To be called from backend dtors. Used to clean up Skia objects before GPU API contexts are
+ // destroyed by subclasses.
+ void SkiaRenderEngine::finishRenderingAndAbandonContexts() {
++    // Stop the burnout watcher thread before acquiring mRenderingMutex, to avoid
++    // a potential ordering deadlock (the thread itself never holds mRenderingMutex).
++    mBurnoutReloadStop.store(true, std::memory_order_relaxed);
++    if (mBurnoutReloadThread.joinable()) {
++        mBurnoutReloadThread.join();
++    }
++
+     std::lock_guard<std::mutex> lock(mRenderingMutex);
+ 
+     if (mBlurFilter) {
+         delete mBlurFilter;
+     }
++    mBurnoutFilter.reset();
+ 
+     // Leftover textures may hold refs to backend-specific Skia contexts, which must be released
+     // before ~SkiaGpuContext is called.
+@@ -1354,6 +1398,19 @@ void SkiaRenderEngine::drawLayersInternal(
+     surfaceAutoSaveRestore.restore();
+     mCapture->endCapture();
+ 
++    // Burn-out correction post-pass: draw the correction shader into dstSurface's
++    // canvas after all layers are composited but before flushAndSubmit. Runs only
++    // when the filter has a loaded config and the master sysprop is "1".
++    if (mBurnoutFilter && mBurnoutFilter->isLoaded()) {
++        using namespace std::string_view_literals;
++        // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
++        static android::base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
++        if (sBurnoutEnabled.Get() != "0"sv) {
++            SFTRACE_NAME("BurnoutFilter post-pass");
++            mBurnoutFilter->generate(dstSurface.get());
++        }
++    }
++
+     LOG_ALWAYS_FATAL_IF(activeSurface != dstSurface);
+     auto drawFence = sp<Fence>::make(flushAndSubmit(context, dstSurface));
+     trace(drawFence);
+diff --git a/libs/renderengine/skia/SkiaRenderEngine.h b/libs/renderengine/skia/SkiaRenderEngine.h
+index 26fab27b4a..de90a02fc9 100644
+--- a/libs/renderengine/skia/SkiaRenderEngine.h
++++ b/libs/renderengine/skia/SkiaRenderEngine.h
+@@ -28,8 +28,10 @@
+ #include <renderengine/RenderEngine.h>
+ #include <sys/types.h>
+ 
++#include <atomic>
+ #include <memory>
+ #include <mutex>
++#include <thread>
+ #include <unordered_map>
+ 
+ #include "AutoBackendTexture.h"
+@@ -39,6 +41,7 @@
+ #include "compat/SkiaGpuContext.h"
+ #include "debug/SkiaCapture.h"
+ #include "filters/BlurFilter.h"
++#include "filters/BurnoutFilter.h"
+ #include "filters/EdgeExtensionShaderFactory.h"
+ #include "filters/GainmapFactory.h"
+ #include "filters/LutShader.h"
+@@ -211,6 +214,11 @@ private:
+     sp<Fence> mLastDrawFence;
+     BlurFilter* mBlurFilter = nullptr;
+ 
++    // Burn-out correction post-pass.
++    std::unique_ptr<BurnoutFilter> mBurnoutFilter;
++    std::thread                   mBurnoutReloadThread;
++    std::atomic<bool>             mBurnoutReloadStop{false};
++
+     // Object to capture commands send to Skia.
+     std::unique_ptr<SkiaCapture> mCapture;
+ 
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index 0ab1a9b812..eb59aeac2d 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -3460,6 +3460,16 @@ void SurfaceFlinger::setForcedClientCompositionLayerStacks(
+         forceAllDisplaysToClientComposition = true;
+     }
+ 
++    // Burn-out correction requires GPU composition on every frame so the post-pass
++    // shader is applied consistently. Mirror mDebugDisableHWC: if the master prop
++    // is "1", force CLIENT composition for all layer stacks, then let
++    // SkiaRenderEngine::drawLayersInternal() apply the BurnoutFilter post-pass.
++    // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
++    static base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
++    if (!forceAllDisplaysToClientComposition && sBurnoutEnabled.Get() != "0"sv) {
++        forceAllDisplaysToClientComposition = true;
++    }
++
+     if (mDebugFlashDelay != 0) {
+         forceAllDisplaysToClientComposition = true;
+         refreshArgs.devOptFlashDirtyRegionsDelay = std::chrono::milliseconds(mDebugFlashDelay);
+diff --git a/services/surfaceflinger/surfaceflinger.rc b/services/surfaceflinger/surfaceflinger.rc
+index dfdd4aa38c..afc7d22e6d 100644
+--- a/services/surfaceflinger/surfaceflinger.rc
++++ b/services/surfaceflinger/surfaceflinger.rc
+@@ -1,3 +1,7 @@
++on post-fs-data
++    mkdir /data/burnout 0750 system system
++    restorecon /data/burnout
++
+ service surfaceflinger /system/bin/surfaceflinger
+     class core animation
+     user system
+diff --git a/libs/renderengine/skia/filters/BurnoutFilter.cpp b/libs/renderengine/skia/filters/BurnoutFilter.cpp
+new file mode 100644
+index 0000000000..437baa9f49
+--- /dev/null
++++ b/libs/renderengine/skia/filters/BurnoutFilter.cpp
+@@ -0,0 +1,335 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define ATRACE_TAG ATRACE_TAG_GRAPHICS
++
++#include "BurnoutFilter.h"
++
++#include <SkBlendMode.h>
++#include <SkCanvas.h>
++#include <SkData.h>
++#include <SkImage.h>
++#include <SkPaint.h>
++#include <SkSamplingOptions.h>
++#include <SkTileMode.h>
++#include <SkString.h>
++#include <android-base/file.h>
++#include <android-base/logging.h>
++#include <android-base/properties.h>
++#include <json/json.h>
++#include <log/log.h>
++#include <png.h>
++#include <cstring>
++#include <memory>
++#include <string_view>
++
++namespace android {
++namespace renderengine {
++namespace skia {
++
++namespace {
++
++// SkSL source — embedded as a string literal. Content stays in sync with
++// libs/renderengine/skia/filters/burnout_shader.sksl (the .sksl file is for
++// documentation and offline tooling; only this embedded copy is used at runtime).
++constexpr char kBurnoutSkSL[] = R"SkSL(
++uniform shader composedLayers;
++uniform shader mask;
++uniform float2 framebufferSizePx;
++uniform float2 maskSizePx;
++uniform float falloffRadiusPx;
++uniform half globalDim;
++uniform half maxWearR;
++uniform half maxWearG;
++uniform half maxWearB;
++uniform int zoneCount;
++uniform float4 zone0;
++uniform float4 zone1;
++uniform half zone0Dim;
++uniform half zone1Dim;
++uniform int correctionOn;
++
++half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
++half3 lin2srgb(half3 c) { return pow(c, half3(1.0/2.2)); }
++
++float zoneWeight(float2 uv, float4 b, float radiusPx) {
++    float2 d_uv = max(max(b.xy - uv, uv - b.zw), float2(0.0));
++    if (radiusPx <= 0.0) {
++        return (d_uv.x == 0.0 && d_uv.y == 0.0) ? 1.0 : 0.0;
++    }
++    float2 d_px = d_uv * maskSizePx;
++    float dist = length(d_px);
++    return clamp(1.0 - dist / radiusPx, 0.0, 1.0);
++}
++
++half4 main(float2 coord) {
++    half4 src = composedLayers.eval(coord);
++    float2 uv = coord / framebufferSizePx;
++    half3 wearRaw = mask.eval(uv * maskSizePx).rgb;
++    half3 lin = srgb2lin(src.rgb);
++    half3 outLin = lin;
++    if (correctionOn == 1) {
++        bool marked = max(wearRaw.r, max(wearRaw.g, wearRaw.b)) > half(0.001);
++        if (!marked) {
++            float zw = 0.0;
++            half zd = 0.0;
++            if (zoneCount >= 1) {
++                float w = zoneWeight(uv, zone0, falloffRadiusPx);
++                if (w > zw) { zw = w; zd = zone0Dim; }
++                else if (w == zw && zone0Dim > zd) { zd = zone0Dim; }
++            }
++            if (zoneCount >= 2) {
++                float w = zoneWeight(uv, zone1, falloffRadiusPx);
++                if (w > zw) { zw = w; zd = zone1Dim; }
++                else if (w == zw && zone1Dim > zd) { zd = zone1Dim; }
++            }
++            half dim = mix(globalDim, zd, half(zw));
++            half3 channelHasWear = step(half3(0.001), half3(maxWearR, maxWearG, maxWearB));
++            half3 dimV = clamp(channelHasWear * half3(dim), half3(0.0), half3(0.99));
++            outLin = lin * (half3(1.0) - dimV);
++        }
++    }
++    outLin = clamp(outLin, half3(0.0), half3(1.0));
++    return half4(lin2srgb(outLin), src.a);
++}
++)SkSL";
++
++// Primary config (writable, user-tunable via push-burnout-config.sh).
++constexpr char kMaskPathRuntime[]  = "/data/burnout/mask.png";
++constexpr char kZonesPathRuntime[] = "/data/burnout/zones.json";
++
++// Factory fallback (baked into the system image).
++constexpr char kMaskPathFallback[]  = "/system/etc/burnout/mask.png";
++constexpr char kZonesPathFallback[] = "/system/etc/burnout/zones.json";
++
++} // namespace
++
++BurnoutFilter::BurnoutFilter() {
++    auto [effect, errorText] = SkRuntimeEffect::MakeForShader(SkString(kBurnoutSkSL));
++    if (!effect) {
++        ALOGE("BurnoutFilter: SkSL compile failed: %s", errorText.c_str());
++        return;
++    }
++    mEffect = effect;
++    ALOGI("BurnoutFilter: SkSL compiled successfully");
++}
++
++bool BurnoutFilter::isLoaded() const {
++    std::lock_guard<std::mutex> lock(mLock);
++    return mLoaded;
++}
++
++bool BurnoutFilter::reload() {
++    std::lock_guard<std::mutex> lock(mLock);
++    mLoaded = false;
++
++    if (!mEffect) {
++        ALOGW("BurnoutFilter::reload: SkSL not compiled, skipping");
++        return false;
++    }
++
++    // Mask: try /data/burnout/ first, fall back to /system/etc/burnout/.
++    const char* maskSrc = kMaskPathRuntime;
++    if (!loadMask(kMaskPathRuntime)) {
++        maskSrc = kMaskPathFallback;
++        if (!loadMask(kMaskPathFallback)) {
++            return false;
++        }
++    }
++
++    // Zones: independent fallback — a partial /data/burnout/ (only mask.png) still
++    // gets the factory zones.json.
++    const char* zonesSrc = kZonesPathRuntime;
++    if (!loadZones(kZonesPathRuntime)) {
++        zonesSrc = kZonesPathFallback;
++        if (!loadZones(kZonesPathFallback)) {
++            return false;
++        }
++    }
++
++    ALOGI("BurnoutFilter: loaded mask %dx%d from %s, zones from %s, "
++          "%d zone(s), globalDim=%.3f, falloff=%.1fpx",
++          mState.maskSizePx.width(), mState.maskSizePx.height(), maskSrc, zonesSrc,
++          mState.zoneCount, mState.globalDim, mState.falloffRadiusPx);
++    mLoaded = true;
++    return true;
++}
++
++bool BurnoutFilter::loadMask(const std::string& path) {
++    std::string bytes;
++    if (!android::base::ReadFileToString(path, &bytes)) {
++        ALOGW("BurnoutFilter: cannot read %s", path.c_str());
++        return false;
++    }
++
++    // libskia_renderengine is built without image codecs, so SkImages::DeferredFromEncodedData
++    // returns nullptr for PNGs. Decode via libpng's simplified API (no setjmp/longjmp dance,
++    // returns error codes through image.message) and hand the raw RGBA8 buffer to Skia.
++    png_image image;
++    std::memset(&image, 0, sizeof(image));
++    image.version = PNG_IMAGE_VERSION;
++    if (!png_image_begin_read_from_memory(&image, bytes.data(), bytes.size())) {
++        ALOGW("BurnoutFilter: cannot decode %s: %s", path.c_str(), image.message);
++        return false;
++    }
++    image.format = PNG_FORMAT_RGBA;
++    const int width = static_cast<int>(image.width);
++    const int height = static_cast<int>(image.height);
++    const size_t pixelBytes = PNG_IMAGE_SIZE(image);
++    auto pixels = std::make_unique<uint8_t[]>(pixelBytes);
++    if (!png_image_finish_read(&image, /*background*/nullptr, pixels.get(),
++                               /*row_stride*/0, /*colormap*/nullptr)) {
++        ALOGW("BurnoutFilter: cannot decode %s: %s", path.c_str(), image.message);
++        png_image_free(&image);
++        return false;
++    }
++
++    SkImageInfo skInfo = SkImageInfo::Make(width, height,
++                                           kRGBA_8888_SkColorType,
++                                           kUnpremul_SkAlphaType);
++    sk_sp<SkData> data = SkData::MakeWithCopy(pixels.get(), pixelBytes);
++    sk_sp<SkImage> img = SkImages::RasterFromData(skInfo, std::move(data),
++                                                  static_cast<size_t>(width) * 4);
++    if (!img) {
++        ALOGW("BurnoutFilter: SkImages::RasterFromData returned null for %s", path.c_str());
++        return false;
++    }
++    mMask = img;
++    mState.maskSizePx = SkISize::Make(width, height);
++    return true;
++}
++
++bool BurnoutFilter::loadZones(const std::string& path) {
++    std::string text;
++    if (!android::base::ReadFileToString(path, &text)) {
++        ALOGW("BurnoutFilter: cannot read %s", path.c_str());
++        return false;
++    }
++
++    Json::Value root;
++    Json::Reader reader;
++    if (!reader.parse(text, root, /*collectComments=*/false)) {
++        ALOGW("BurnoutFilter: cannot parse %s: %s", path.c_str(),
++              reader.getFormattedErrorMessages().c_str());
++        return false;
++    }
++
++    if (!root.isMember("falloff_radius_px") || !root.isMember("global_dim") ||
++        !root.isMember("zones") || !root.isMember("max_wear_per_channel")) {
++        ALOGW("BurnoutFilter: %s missing required fields", path.c_str());
++        return false;
++    }
++
++    mState.falloffRadiusPx = root["falloff_radius_px"].asFloat();
++    mState.globalDim       = root["global_dim"].asFloat();
++
++    const Json::Value& mw = root["max_wear_per_channel"];
++    mState.maxWearR = mw.get("r", 0.0).asFloat();
++    mState.maxWearG = mw.get("g", 0.0).asFloat();
++    mState.maxWearB = mw.get("b", 0.0).asFloat();
++
++    const Json::Value& zones = root["zones"];
++    if (!zones.isArray()) {
++        ALOGW("BurnoutFilter: %s zones field is not an array", path.c_str());
++        return false;
++    }
++
++    const float w = static_cast<float>(mState.maskSizePx.width());
++    const float h = static_cast<float>(mState.maskSizePx.height());
++    if (w <= 0.f || h <= 0.f) {
++        ALOGW("BurnoutFilter: mask must be loaded before zones");
++        return false;
++    }
++
++    mState.zoneCount = std::min(2, static_cast<int>(zones.size()));
++
++    auto loadZone = [&](const Json::Value& z, SkRect* outBbox, float* outDim) {
++        const float x0 = z["x0"].asFloat();
++        const float y0 = z["y0"].asFloat();
++        const float x1 = z["x1"].asFloat();
++        const float y1 = z["y1"].asFloat();
++        *outBbox = SkRect::MakeLTRB(x0 / w, y0 / h, x1 / w, y1 / h);  // pixel → UV
++        *outDim  = z["dim"].asFloat();
++    };
++
++    if (mState.zoneCount >= 1) loadZone(zones[0], &mState.zone0, &mState.zone0Dim);
++    if (mState.zoneCount >= 2) loadZone(zones[1], &mState.zone1, &mState.zone1Dim);
++    return true;
++}
++
++bool BurnoutFilter::generate(SkSurface* composedSurface) {
++    using namespace std::string_view_literals;
++    std::lock_guard<std::mutex> lock(mLock);
++
++    if (!mLoaded || !mEffect || !composedSurface) {
++        return false;
++    }
++
++    static android::base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
++    // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
++    const bool correctionOn = (sBurnoutEnabled.Get() != "0"sv);
++
++    // Snapshot the current framebuffer contents as an image to use as shader input.
++    sk_sp<SkImage> input = composedSurface->makeImageSnapshot();
++    if (!input) {
++        ALOGW("BurnoutFilter::generate: makeImageSnapshot returned null");
++        return false;
++    }
++
++    SkRuntimeShaderBuilder builder(mEffect);
++    builder.child("composedLayers") = input->makeShader(SkSamplingOptions());
++    builder.child("mask") =
++        mMask->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
++                          SkSamplingOptions(SkFilterMode::kLinear));
++
++    const SkISize fbSize = input->dimensions();
++    builder.uniform("framebufferSizePx") =
++        SkV2{static_cast<float>(fbSize.width()), static_cast<float>(fbSize.height())};
++    builder.uniform("maskSizePx") =
++        SkV2{static_cast<float>(mState.maskSizePx.width()),
++             static_cast<float>(mState.maskSizePx.height())};
++    builder.uniform("falloffRadiusPx") = mState.falloffRadiusPx;
++    builder.uniform("globalDim")       = mState.globalDim;
++    builder.uniform("maxWearR")        = mState.maxWearR;
++    builder.uniform("maxWearG")        = mState.maxWearG;
++    builder.uniform("maxWearB")        = mState.maxWearB;
++    builder.uniform("zoneCount")       = mState.zoneCount;
++    builder.uniform("zone0") =
++        SkV4{mState.zone0.fLeft, mState.zone0.fTop, mState.zone0.fRight, mState.zone0.fBottom};
++    builder.uniform("zone1") =
++        SkV4{mState.zone1.fLeft, mState.zone1.fTop, mState.zone1.fRight, mState.zone1.fBottom};
++    builder.uniform("zone0Dim")     = mState.zone0Dim;
++    builder.uniform("zone1Dim")     = mState.zone1Dim;
++    builder.uniform("correctionOn") = correctionOn ? 1 : 0;
++
++    auto shader = builder.makeShader();
++    if (!shader) {
++        ALOGW("BurnoutFilter::generate: makeShader returned null");
++        return false;
++    }
++
++    // Draw the corrected output back into the same surface's canvas.
++    // The surface IS the output framebuffer (dstSurface in drawLayersInternal).
++    SkPaint paint;
++    paint.setShader(std::move(shader));
++    paint.setBlendMode(SkBlendMode::kSrc);
++    composedSurface->getCanvas()->drawPaint(paint);
++    return true;
++}
++
++}  // namespace skia
++}  // namespace renderengine
++}  // namespace android
+diff --git a/libs/renderengine/skia/filters/BurnoutFilter.h b/libs/renderengine/skia/filters/BurnoutFilter.h
+new file mode 100644
+index 0000000000..b1bfe689e2
+--- /dev/null
++++ b/libs/renderengine/skia/filters/BurnoutFilter.h
+@@ -0,0 +1,87 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#pragma once
++
++#include <SkImage.h>
++#include <SkRect.h>
++#include <SkRuntimeEffect.h>
++#include <SkSurface.h>
++
++#include <mutex>
++#include <string>
++
++namespace android {
++namespace renderengine {
++namespace skia {
++
++struct BurnoutState {
++    int    zoneCount = 0;
++    SkRect zone0 = SkRect::MakeEmpty();
++    SkRect zone1 = SkRect::MakeEmpty();
++    float  zone0Dim = 0.f;
++    float  zone1Dim = 0.f;
++    float  falloffRadiusPx = 0.f;
++    float  globalDim = 0.f;
++    float  maxWearR = 0.f;
++    float  maxWearG = 0.f;
++    float  maxWearB = 0.f;
++    SkISize maskSizePx = SkISize::MakeEmpty();
++};
++
++/**
++ * BurnoutFilter — per-pixel OLED burn-out correction post-pass.
++ *
++ * Modeled on BlurFilter in this directory. Compile SkSL once at construction;
++ * apply per-frame only when enabled and config files are loaded successfully.
++ *
++ * Thread safety: reload() is guarded by mLock; it may be called from the
++ * property-watcher thread. generate() is called on the render thread which holds
++ * mRenderingMutex (SkiaRenderEngine level), and also acquires mLock for the
++ * state snapshot. Never hold both mLock and mRenderingMutex together inside
++ * BurnoutFilter — acquire order is always mRenderingMutex (outer) then mLock.
++ */
++class BurnoutFilter {
++public:
++    BurnoutFilter();
++
++    // Reload mask + zones from /data/burnout/ (runtime) or /system/etc/burnout/
++    // (factory fallback). Returns true iff a usable state was loaded. On false,
++    // mLoaded is set to false and a single warning is logged per attempt.
++    bool reload();
++
++    // True iff the most recent reload() succeeded.
++    bool isLoaded() const;
++
++    // Run the correction post-pass. Reads composedSurface's pixels as a
++    // temporary image, applies the SkSL shader, and draws the corrected
++    // result back into composedSurface's canvas.
++    // Returns true on success; false if skipped (shader not compiled, not loaded).
++    bool generate(SkSurface* composedSurface);
++
++private:
++    bool loadMask(const std::string& path);
++    bool loadZones(const std::string& path);
++
++    sk_sp<SkRuntimeEffect> mEffect;    // compiled once at construction
++    sk_sp<SkImage>         mMask;      // /data/burnout/mask.png
++    BurnoutState            mState;
++    bool                   mLoaded = false;
++    mutable std::mutex     mLock;      // guards mMask, mState, mLoaded
++};
++
++}  // namespace skia
++}  // namespace renderengine
++}  // namespace android
+diff --git a/libs/renderengine/skia/filters/burnout_shader.sksl b/libs/renderengine/skia/filters/burnout_shader.sksl
+new file mode 100644
+index 0000000000..d0960ef003
+--- /dev/null
++++ b/libs/renderengine/skia/filters/burnout_shader.sksl
+@@ -0,0 +1,80 @@
++// Phase 2 SF post-pass burn-out correction.
++// Source of truth for the algorithm: burnout_shader.glsl (Phase 1 playground).
++// Differences from GLSL:
++//   - SkSL idioms: half/float types, shader.eval() instead of texture()
++//   - composedLayers replaces u_bgColor (we sample the framebuffer being post-processed)
++//   - Drops the playground-only outline/panel-sim blocks and their uniforms
++//   - Adds framebufferSizePx so coord (pixel space) -> uv (UV space) conversion stays explicit
++//   - No Y-flip: SkSL coord is top-left origin (same as Android Bitmap), unlike GL
++
++uniform shader composedLayers;       // SF framebuffer being post-processed
++uniform shader mask;                  // /data/burnout/mask.png
++uniform float2 framebufferSizePx;     // SF framebuffer dimensions, pixels
++uniform float2 maskSizePx;            // mask dimensions, pixels
++uniform float falloffRadiusPx;        // outward linear-ramp radius around each bbox, mask pixels
++uniform half globalDim;               // baseline dim where channelHasWear, outside any zone
++uniform half maxWearR;                // per-channel binary gate: max wear value in mask, normalized
++uniform half maxWearG;
++uniform half maxWearB;
++uniform int zoneCount;                // 0, 1, or 2
++uniform float4 zone0;                 // x0, y0, x1, y1 in UV [0,1]
++uniform float4 zone1;
++uniform half zone0Dim;
++uniform half zone1Dim;
++uniform int correctionOn;             // 0 or 1 — short-circuit when off
++
++half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
++half3 lin2srgb(half3 c) { return pow(c, half3(1.0/2.2)); }
++
++// Falloff weight in [0,1]: 1 inside the bbox, linear ramp to 0 over `radiusPx` outside.
++// uv is in UV space [0,1]; b is the bbox in UV space; radiusPx is in mask-pixel units.
++float zoneWeight(float2 uv, float4 b, float radiusPx) {
++    // Per-axis distance outside the box, in UV.
++    float2 d_uv = max(max(b.xy - uv, uv - b.zw), float2(0.0));
++    if (radiusPx <= 0.0) {
++        // No falloff: hard edge.
++        return (d_uv.x == 0.0 && d_uv.y == 0.0) ? 1.0 : 0.0;
++    }
++    // Convert UV-distance to pixel-distance for true Euclidean falloff.
++    float2 d_px = d_uv * maskSizePx;
++    float dist = length(d_px);
++    return clamp(1.0 - dist / radiusPx, 0.0, 1.0);
++}
++
++half4 main(float2 coord) {
++    half4 src = composedLayers.eval(coord);
++    float2 uv = coord / framebufferSizePx;
++
++    half3 wearRaw = mask.eval(uv * maskSizePx).rgb;
++    half3 lin = srgb2lin(src.rgb);
++    half3 outLin = lin;
++
++    if (correctionOn == 1) {
++        bool marked = max(wearRaw.r, max(wearRaw.g, wearRaw.b)) > half(0.001);
++        if (!marked) {
++            // Pick the dominant zone (highest weight) and lerp from globalDim to that zone's dim.
++            // weight=1 inside bbox  -> dim = zone.dim (globalDim has no influence here)
++            // weight=0 outside all  -> dim = globalDim
++            // 0<weight<1 in falloff -> smooth ramp between the two
++            float zw = 0.0;
++            half zd = 0.0;
++            if (zoneCount >= 1) {
++                float w = zoneWeight(uv, zone0, falloffRadiusPx);
++                if (w > zw) { zw = w; zd = zone0Dim; }
++                else if (w == zw && zone0Dim > zd) { zd = zone0Dim; }
++            }
++            if (zoneCount >= 2) {
++                float w = zoneWeight(uv, zone1, falloffRadiusPx);
++                if (w > zw) { zw = w; zd = zone1Dim; }
++                else if (w == zw && zone1Dim > zd) { zd = zone1Dim; }
++            }
++            half dim = mix(globalDim, zd, half(zw));
++            half3 channelHasWear = step(half3(0.001), half3(maxWearR, maxWearG, maxWearB));
++            half3 dimV = clamp(channelHasWear * half3(dim), half3(0.0), half3(0.99));
++            outLin = lin * (half3(1.0) - dimV);
++        }
++    }
++
++    outLin = clamp(outLin, half3(0.0), half3(1.0));
++    return half4(lin2srgb(outLin), src.a);
++}

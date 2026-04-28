@@ -1,0 +1,105 @@
+diff --git a/contexts/file_contexts_test_data b/contexts/file_contexts_test_data
+index 59745708d..b54edb05c 100644
+--- a/contexts/file_contexts_test_data
++++ b/contexts/file_contexts_test_data
+@@ -1158,6 +1158,9 @@
+ /data/bootchart                                                   bootchart_data_file
+ /data/bootchart/test                                              bootchart_data_file
+ 
++/data/burnout                                                      burnout_data_file
++/data/burnout/test                                                 burnout_data_file
++
+ /data/misc_de/0/sdksandbox                                        sdk_sandbox_system_data_file
+ /data/misc_de/99/sdksandbox                                       sdk_sandbox_system_data_file
+ /data/misc_ce/0/sdksandbox                                        sdk_sandbox_system_data_file
+diff --git a/private/file.te b/private/file.te
+index b832da44c..f6e4d8ead 100644
+--- a/private/file.te
++++ b/private/file.te
+@@ -283,3 +283,6 @@ until_board_api(202604, `type sysfs_typec, fs_type, sysfs_type;')
+ until_board_api(202604, `type sysfs_usb_pd, fs_type, sysfs_type;')
+ 
+ type zygote_next_socket, file_type, coredomain_socket;
++
++# /data/burnout — burn-out compensation mask + zones config
++type burnout_data_file, file_type, data_file_type, core_data_file_type;
+diff --git a/private/file_contexts b/private/file_contexts
+index bc79eebf7..ee3f5e1ff 100644
+--- a/private/file_contexts
++++ b/private/file_contexts
+@@ -970,3 +970,7 @@
+ #############################
+ # For overlays
+ /second_stage_resources/overlay_remounter u:object_r:overlay_remounter_exec:s0
++
++#############################
++# Burn-out compensation (Phase 2)
++/data/burnout(/.*)?      u:object_r:burnout_data_file:s0
+diff --git a/private/platform_app.te b/private/platform_app.te
+index 9e859f4c8..c4a992972 100644
+--- a/private/platform_app.te
++++ b/private/platform_app.te
+@@ -54,6 +54,9 @@ userdebug_or_eng(`
+ ')
+ set_prop(platform_app, debug_tracing_desktop_mode_visible_tasks_prop)
+ 
++# Burn-out compensation (Phase 2): SystemUI's BurnoutTile toggles persist.sys.burnout.enabled.
++set_prop(platform_app, burnout_prop)
++
+ # com.android.captiveportallogin reads /proc/vmstat
+ allow platform_app {
+   proc_vmstat
+diff --git a/private/property.te b/private/property.te
+index a9e13a346..8372c5cb9 100644
+--- a/private/property.te
++++ b/private/property.te
+@@ -5,6 +5,7 @@ system_internal_prop(apexd_payload_metadata_prop)
+ system_internal_prop(apexd_private_prop)
+ system_internal_prop(appsearch_vm_prop)
+ system_internal_prop(bluetooth_lea_prop)
++system_internal_prop(burnout_prop)
+ system_internal_prop(ctl_snapuserd_prop)
+ system_internal_prop(ctl_prefetch_prop)
+ system_internal_prop(ctl_uprobestats_prop)
+diff --git a/private/property_contexts b/private/property_contexts
+index b325c2ff0..330318676 100644
+--- a/private/property_contexts
++++ b/private/property_contexts
+@@ -1904,3 +1904,7 @@ ro.arm64.memtag.bootctl_supported u:object_r:arm64_memtag_bootctl_prop:s0 exact
+ 
+ # Wallet properties
+ ro.gms.wallet.se_capability u:object_r:wallet_prop:s0 exact int
++
++# Burn-out compensation (Phase 2)
++persist.sys.burnout.        u:object_r:burnout_prop:s0
++sys.burnout.                u:object_r:burnout_prop:s0
+diff --git a/private/surfaceflinger.te b/private/surfaceflinger.te
+index f4f64ce4a..d05948785 100644
+--- a/private/surfaceflinger.te
++++ b/private/surfaceflinger.te
+@@ -157,6 +157,13 @@ allow surfaceflinger surfaceflinger_data_file:file create_file_perms;
+ # Surfaceflinger should not be reading default vendor-defined properties.
+ dontaudit surfaceflinger vendor_default_prop:file read;
+ 
++# Burn-out compensation (Phase 2): read mask + zones from /data/burnout/
++allow surfaceflinger burnout_data_file:dir { search getattr };
++allow surfaceflinger burnout_data_file:file { read getattr open };
++
++# Burn-out compensation: read sysprops (persist.sys.burnout.*, sys.burnout.*)
++get_prop(surfaceflinger, burnout_prop)
++
+ ###
+ ### Neverallow rules
+ ###
+diff --git a/private/system_server.te b/private/system_server.te
+index d85caed61..dfcb35f1b 100644
+--- a/private/system_server.te
++++ b/private/system_server.te
+@@ -788,6 +788,7 @@ allow system_server server_configurable_flags_data_file:file r_file_perms;
+ set_prop(system_server, system_prop)
+ set_prop(system_server, bootanim_system_prop)
+ set_prop(system_server, bluetooth_prop)
++set_prop(system_server, burnout_prop)
+ set_prop(system_server, exported_system_prop)
+ set_prop(system_server, exported3_system_prop)
+ set_prop(system_server, safemode_prop)
