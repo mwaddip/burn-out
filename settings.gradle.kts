@@ -10,6 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // libsu is published via JitPack (com.github.topjohnwu.libsu:core).
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
