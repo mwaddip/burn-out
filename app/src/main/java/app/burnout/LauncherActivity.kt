@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
+import app.burnout.calibrate.CalibrateActivity
 import app.burnout.mark.MarkActivity
 
 class LauncherActivity : AppCompatActivity() {
@@ -13,7 +14,8 @@ class LauncherActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_mark).setOnClickListener {
             startActivity(Intent(this, MarkActivity::class.java))
         }
-        // CALIBRATE: enabled in Phase 4.
-        findViewById<Button>(R.id.btn_calibrate).isEnabled = false
+        findViewById<Button>(R.id.btn_calibrate).setOnClickListener {
+            startActivity(Intent(this, CalibrateActivity::class.java))
+        }
     }
 }

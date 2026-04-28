@@ -14,4 +14,13 @@
     <string name="stamp_mode_all">CH: all</string>
     <string name="move_target_cursor">MOVE: cursor</string>
     <string name="move_target_image">MOVE: image</string>
+    <string name="calibrate_save">SAVE</string>
+    <string name="calibrate_export">EXPORT</string>
+    <string name="calibrate_zone">ZONE</string>
+    <string name="calibrate_no_mask">No mask in autosave — open Mark first</string>
+    <string name="calibrate_save_ok">Saved (%1$d zones) — live</string>
+    <string name="calibrate_save_denied">Root denied — open Magisk and grant app.burnout</string>
+    <string name="calibrate_save_failed">Save failed (exit %1$d) — see logs</string>
+    <string name="calibrate_export_ok">Exported to Download/burn-out/%1$s</string>
+    <string name="calibrate_export_failed">Export failed: %1$s</string>
 </resources>
