@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <app.burnout.mark.MarkView
+        android:id="@+id/mark_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/status_pill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="32dp"
+        android:padding="8dp"
+        android:background="#80000000"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:text="R s:1 (0,0)" />
+
+    <LinearLayout
+        android:id="@+id/dpad_cluster"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="64dp"
+        android:orientation="vertical"
+        android:background="#80000000"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/dpad_drag_handle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:paddingTop="4dp"
+            android:paddingBottom="6dp"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:text="@string/drag_handle" />
+
+        <Button
+            android:id="@+id/btn_up"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_gravity="center_horizontal"
+            android:text="↑" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button
+                android:id="@+id/btn_left"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="←" />
+            <Button
+                android:id="@+id/btn_confirm"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="●" />
+            <Button
+                android:id="@+id/btn_right"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="→" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_down"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_gravity="center_horizontal"
+            android:text="↓" />
+
+        <Button
+            android:id="@+id/btn_move_target"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/move_target_cursor" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/mode_buttons"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="32dp"
+        android:layout_marginBottom="64dp"
+        android:orientation="vertical"
+        android:background="#80000000"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/mode_drag_handle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:paddingTop="4dp"
+            android:paddingBottom="6dp"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:text="@string/drag_handle" />
+
+        <Button
+            android:id="@+id/btn_channel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CH" />
+        <Button
+            android:id="@+id/btn_severity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SEV" />
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button
+                android:id="@+id/btn_brush_minus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="−" />
+            <Button
+                android:id="@+id/btn_brush"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="B:1" />
+            <Button
+                android:id="@+id/btn_brush_plus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="+" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_fine_tune"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/fine_off" />
+
+        <Button
+            android:id="@+id/btn_clear_channel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/clear_channel" />
+
+        <Button
+            android:id="@+id/btn_hide_overlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/ab_hide_hold" />
+
+        <Button
+            android:id="@+id/btn_load_image"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/load_image" />
+
+        <Button
+            android:id="@+id/btn_stamp_image"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/stamp_image" />
+
+        <Button
+            android:id="@+id/btn_clear_image"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/clear_image" />
+
+        <Button
+            android:id="@+id/btn_stamp_channel_mode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/stamp_mode_selected" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button
+                android:id="@+id/btn_image_minus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="IMG−" />
+            <Button
+                android:id="@+id/btn_image_plus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="IMG+" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>
