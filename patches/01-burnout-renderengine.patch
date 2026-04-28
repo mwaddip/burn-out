@@ -1,5 +1,5 @@
 diff --git a/libs/renderengine/Android.bp b/libs/renderengine/Android.bp
-index 847a88662b..cded668b33 100644
+index 847a88662b..a02542d30d 100644
 --- a/libs/renderengine/Android.bp
 +++ b/libs/renderengine/Android.bp
 @@ -39,6 +39,7 @@ cc_defaults {
@@ -19,7 +19,7 @@ index 847a88662b..cded668b33 100644
          "skia/filters/GainmapFactory.cpp",
          "skia/filters/GaussianBlurFilter.cpp",
 diff --git a/libs/renderengine/skia/SkiaRenderEngine.cpp b/libs/renderengine/skia/SkiaRenderEngine.cpp
-index daa0ecc471..486bf60b09 100644
+index daa0ecc471..642c026b42 100644
 --- a/libs/renderengine/skia/SkiaRenderEngine.cpp
 +++ b/libs/renderengine/skia/SkiaRenderEngine.cpp
 @@ -49,6 +49,7 @@
@@ -99,18 +99,21 @@ index daa0ecc471..486bf60b09 100644
  
      // Leftover textures may hold refs to backend-specific Skia contexts, which must be released
      // before ~SkiaGpuContext is called.
-@@ -1354,6 +1398,19 @@ void SkiaRenderEngine::drawLayersInternal(
+@@ -1354,6 +1398,22 @@ void SkiaRenderEngine::drawLayersInternal(
      surfaceAutoSaveRestore.restore();
      mCapture->endCapture();
  
 +    // Burn-out correction post-pass: draw the correction shader into dstSurface's
 +    // canvas after all layers are composited but before flushAndSubmit. Runs only
-+    // when the filter has a loaded config and the master sysprop is "1".
++    // when the filter has a loaded config, the master sysprop is "1", AND not suspended
++    // by the Burn-out app's foreground lifecycle.
 +    if (mBurnoutFilter && mBurnoutFilter->isLoaded()) {
 +        using namespace std::string_view_literals;
 +        // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
++        // Suspend semantics: only an explicit "1" suspends. Unset / "0" / anything else = active.
 +        static android::base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
-+        if (sBurnoutEnabled.Get() != "0"sv) {
++        static android::base::CachedProperty sBurnoutSuspend("sys.burnout.suspend");
++        if (sBurnoutEnabled.Get() != "0"sv && sBurnoutSuspend.Get() != "1"sv) {
 +            SFTRACE_NAME("BurnoutFilter post-pass");
 +            mBurnoutFilter->generate(dstSurface.get());
 +        }
@@ -120,7 +123,7 @@ index daa0ecc471..486bf60b09 100644
      auto drawFence = sp<Fence>::make(flushAndSubmit(context, dstSurface));
      trace(drawFence);
 diff --git a/libs/renderengine/skia/SkiaRenderEngine.h b/libs/renderengine/skia/SkiaRenderEngine.h
-index 26fab27b4a..de90a02fc9 100644
+index 26fab27b4a..9507498e3f 100644
 --- a/libs/renderengine/skia/SkiaRenderEngine.h
 +++ b/libs/renderengine/skia/SkiaRenderEngine.h
 @@ -28,8 +28,10 @@
@@ -154,45 +157,12 @@ index 26fab27b4a..de90a02fc9 100644
      // Object to capture commands send to Skia.
      std::unique_ptr<SkiaCapture> mCapture;
  
-diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
-index 0ab1a9b812..eb59aeac2d 100644
---- a/services/surfaceflinger/SurfaceFlinger.cpp
-+++ b/services/surfaceflinger/SurfaceFlinger.cpp
-@@ -3460,6 +3460,16 @@ void SurfaceFlinger::setForcedClientCompositionLayerStacks(
-         forceAllDisplaysToClientComposition = true;
-     }
- 
-+    // Burn-out correction requires GPU composition on every frame so the post-pass
-+    // shader is applied consistently. Mirror mDebugDisableHWC: if the master prop
-+    // is "1", force CLIENT composition for all layer stacks, then let
-+    // SkiaRenderEngine::drawLayersInternal() apply the BurnoutFilter post-pass.
-+    // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
-+    static base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
-+    if (!forceAllDisplaysToClientComposition && sBurnoutEnabled.Get() != "0"sv) {
-+        forceAllDisplaysToClientComposition = true;
-+    }
-+
-     if (mDebugFlashDelay != 0) {
-         forceAllDisplaysToClientComposition = true;
-         refreshArgs.devOptFlashDirtyRegionsDelay = std::chrono::milliseconds(mDebugFlashDelay);
-diff --git a/services/surfaceflinger/surfaceflinger.rc b/services/surfaceflinger/surfaceflinger.rc
-index dfdd4aa38c..afc7d22e6d 100644
---- a/services/surfaceflinger/surfaceflinger.rc
-+++ b/services/surfaceflinger/surfaceflinger.rc
-@@ -1,3 +1,7 @@
-+on post-fs-data
-+    mkdir /data/burnout 0750 system system
-+    restorecon /data/burnout
-+
- service surfaceflinger /system/bin/surfaceflinger
-     class core animation
-     user system
 diff --git a/libs/renderengine/skia/filters/BurnoutFilter.cpp b/libs/renderengine/skia/filters/BurnoutFilter.cpp
 new file mode 100644
-index 0000000000..437baa9f49
+index 0000000000..658fc1b419
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/BurnoutFilter.cpp
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,333 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -251,10 +221,8 @@ index 0000000000..437baa9f49
 +uniform half maxWearG;
 +uniform half maxWearB;
 +uniform int zoneCount;
-+uniform float4 zone0;
-+uniform float4 zone1;
-+uniform half zone0Dim;
-+uniform half zone1Dim;
++uniform float4 zones[8];
++uniform half zoneDims[8];
 +uniform int correctionOn;
 +
 +half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
@@ -281,15 +249,11 @@ index 0000000000..437baa9f49
 +        if (!marked) {
 +            float zw = 0.0;
 +            half zd = 0.0;
-+            if (zoneCount >= 1) {
-+                float w = zoneWeight(uv, zone0, falloffRadiusPx);
-+                if (w > zw) { zw = w; zd = zone0Dim; }
-+                else if (w == zw && zone0Dim > zd) { zd = zone0Dim; }
-+            }
-+            if (zoneCount >= 2) {
-+                float w = zoneWeight(uv, zone1, falloffRadiusPx);
-+                if (w > zw) { zw = w; zd = zone1Dim; }
-+                else if (w == zw && zone1Dim > zd) { zd = zone1Dim; }
++            for (int i = 0; i < 8; i++) {
++                if (i >= zoneCount) { break; }
++                float w = zoneWeight(uv, zones[i], falloffRadiusPx);
++                if (w > zw) { zw = w; zd = zoneDims[i]; }
++                else if (w == zw && zoneDims[i] > zd) { zd = zoneDims[i]; }
 +            }
 +            half dim = mix(globalDim, zd, half(zw));
 +            half3 channelHasWear = step(half3(0.001), half3(maxWearR, maxWearG, maxWearB));
@@ -449,7 +413,7 @@ index 0000000000..437baa9f49
 +        return false;
 +    }
 +
-+    mState.zoneCount = std::min(2, static_cast<int>(zones.size()));
++    mState.zoneCount = std::min(BurnoutState::kMaxZones, static_cast<int>(zones.size()));
 +
 +    auto loadZone = [&](const Json::Value& z, SkRect* outBbox, float* outDim) {
 +        const float x0 = z["x0"].asFloat();
@@ -460,8 +424,9 @@ index 0000000000..437baa9f49
 +        *outDim  = z["dim"].asFloat();
 +    };
 +
-+    if (mState.zoneCount >= 1) loadZone(zones[0], &mState.zone0, &mState.zone0Dim);
-+    if (mState.zoneCount >= 2) loadZone(zones[1], &mState.zone1, &mState.zone1Dim);
++    for (int i = 0; i < mState.zoneCount; ++i) {
++        loadZone(zones[i], &mState.zones[i], &mState.zoneDims[i]);
++    }
 +    return true;
 +}
 +
@@ -474,8 +439,10 @@ index 0000000000..437baa9f49
 +    }
 +
 +    static android::base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
++    static android::base::CachedProperty sBurnoutSuspend("sys.burnout.suspend");
 +    // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
-+    const bool correctionOn = (sBurnoutEnabled.Get() != "0"sv);
++    // Suspend semantics: only an explicit "1" suspends. Unset / "0" / anything else = active.
++    const bool correctionOn = (sBurnoutEnabled.Get() != "0"sv) && (sBurnoutSuspend.Get() != "1"sv);
 +
 +    // Snapshot the current framebuffer contents as an image to use as shader input.
 +    sk_sp<SkImage> input = composedSurface->makeImageSnapshot();
@@ -502,12 +469,13 @@ index 0000000000..437baa9f49
 +    builder.uniform("maxWearG")        = mState.maxWearG;
 +    builder.uniform("maxWearB")        = mState.maxWearB;
 +    builder.uniform("zoneCount")       = mState.zoneCount;
-+    builder.uniform("zone0") =
-+        SkV4{mState.zone0.fLeft, mState.zone0.fTop, mState.zone0.fRight, mState.zone0.fBottom};
-+    builder.uniform("zone1") =
-+        SkV4{mState.zone1.fLeft, mState.zone1.fTop, mState.zone1.fRight, mState.zone1.fBottom};
-+    builder.uniform("zone0Dim")     = mState.zone0Dim;
-+    builder.uniform("zone1Dim")     = mState.zone1Dim;
++    SkV4 zoneUniforms[BurnoutState::kMaxZones];
++    for (int i = 0; i < BurnoutState::kMaxZones; ++i) {
++        zoneUniforms[i] = SkV4{mState.zones[i].fLeft,  mState.zones[i].fTop,
++                                mState.zones[i].fRight, mState.zones[i].fBottom};
++    }
++    builder.uniform("zones").set(zoneUniforms, BurnoutState::kMaxZones);
++    builder.uniform("zoneDims").set(mState.zoneDims, BurnoutState::kMaxZones);
 +    builder.uniform("correctionOn") = correctionOn ? 1 : 0;
 +
 +    auto shader = builder.makeShader();
@@ -530,10 +498,10 @@ index 0000000000..437baa9f49
 +}  // namespace android
 diff --git a/libs/renderengine/skia/filters/BurnoutFilter.h b/libs/renderengine/skia/filters/BurnoutFilter.h
 new file mode 100644
-index 0000000000..b1bfe689e2
+index 0000000000..9a3e74b505
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/BurnoutFilter.h
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,86 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -564,11 +532,10 @@ index 0000000000..b1bfe689e2
 +namespace skia {
 +
 +struct BurnoutState {
++    static constexpr int kMaxZones = 8;
 +    int    zoneCount = 0;
-+    SkRect zone0 = SkRect::MakeEmpty();
-+    SkRect zone1 = SkRect::MakeEmpty();
-+    float  zone0Dim = 0.f;
-+    float  zone1Dim = 0.f;
++    SkRect zones[kMaxZones] = {};   // each entry default-init = (0,0,0,0); zoneWeight() returns 0 outside
++    float  zoneDims[kMaxZones] = {};
 +    float  falloffRadiusPx = 0.f;
 +    float  globalDim = 0.f;
 +    float  maxWearR = 0.f;
@@ -623,10 +590,10 @@ index 0000000000..b1bfe689e2
 +}  // namespace android
 diff --git a/libs/renderengine/skia/filters/burnout_shader.sksl b/libs/renderengine/skia/filters/burnout_shader.sksl
 new file mode 100644
-index 0000000000..d0960ef003
+index 0000000000..16c1f18671
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/burnout_shader.sksl
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,74 @@
 +// Phase 2 SF post-pass burn-out correction.
 +// Source of truth for the algorithm: burnout_shader.glsl (Phase 1 playground).
 +// Differences from GLSL:
@@ -645,11 +612,9 @@ index 0000000000..d0960ef003
 +uniform half maxWearR;                // per-channel binary gate: max wear value in mask, normalized
 +uniform half maxWearG;
 +uniform half maxWearB;
-+uniform int zoneCount;                // 0, 1, or 2
-+uniform float4 zone0;                 // x0, y0, x1, y1 in UV [0,1]
-+uniform float4 zone1;
-+uniform half zone0Dim;
-+uniform half zone1Dim;
++uniform int zoneCount;                // 0..8
++uniform float4 zones[8];              // x0, y0, x1, y1 in UV [0,1]
++uniform half  zoneDims[8];
 +uniform int correctionOn;             // 0 or 1 — short-circuit when off
 +
 +half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
@@ -687,15 +652,11 @@ index 0000000000..d0960ef003
 +            // 0<weight<1 in falloff -> smooth ramp between the two
 +            float zw = 0.0;
 +            half zd = 0.0;
-+            if (zoneCount >= 1) {
-+                float w = zoneWeight(uv, zone0, falloffRadiusPx);
-+                if (w > zw) { zw = w; zd = zone0Dim; }
-+                else if (w == zw && zone0Dim > zd) { zd = zone0Dim; }
-+            }
-+            if (zoneCount >= 2) {
-+                float w = zoneWeight(uv, zone1, falloffRadiusPx);
-+                if (w > zw) { zw = w; zd = zone1Dim; }
-+                else if (w == zw && zone1Dim > zd) { zd = zone1Dim; }
++            for (int i = 0; i < 8; i++) {
++                if (i >= zoneCount) { break; }
++                float w = zoneWeight(uv, zones[i], falloffRadiusPx);
++                if (w > zw) { zw = w; zd = zoneDims[i]; }
++                else if (w == zw && zoneDims[i] > zd) { zd = zoneDims[i]; }
 +            }
 +            half dim = mix(globalDim, zd, half(zw));
 +            half3 channelHasWear = step(half3(0.001), half3(maxWearR, maxWearG, maxWearB));
@@ -707,3 +668,42 @@ index 0000000000..d0960ef003
 +    outLin = clamp(outLin, half3(0.0), half3(1.0));
 +    return half4(lin2srgb(outLin), src.a);
 +}
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index 0ab1a9b812..106fab3fd2 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -3460,6 +3460,22 @@ void SurfaceFlinger::setForcedClientCompositionLayerStacks(
+         forceAllDisplaysToClientComposition = true;
+     }
+ 
++    // Burn-out correction requires GPU composition on every frame so the post-pass
++    // shader is applied consistently. Mirror mDebugDisableHWC: if the master prop
++    // is "1" AND not suspended, force CLIENT composition for all layer stacks,
++    // then let SkiaRenderEngine::drawLayersInternal() apply the BurnoutFilter post-pass.
++    // Default-on semantics: only an explicit "0" disables. Unset / "1" / anything else = on.
++    // Suspend semantics: only an explicit "1" suspends. Unset / "0" / anything else = active.
++    // The Burn-out system app sets sys.burnout.suspend=1 while foreground so its tuning
++    // canvas isn't double-corrected.
++    static base::CachedProperty sBurnoutEnabled("persist.sys.burnout.enabled");
++    static base::CachedProperty sBurnoutSuspend("sys.burnout.suspend");
++    if (!forceAllDisplaysToClientComposition &&
++        sBurnoutEnabled.Get() != "0"sv &&
++        sBurnoutSuspend.Get() != "1"sv) {
++        forceAllDisplaysToClientComposition = true;
++    }
++
+     if (mDebugFlashDelay != 0) {
+         forceAllDisplaysToClientComposition = true;
+         refreshArgs.devOptFlashDirtyRegionsDelay = std::chrono::milliseconds(mDebugFlashDelay);
+diff --git a/services/surfaceflinger/surfaceflinger.rc b/services/surfaceflinger/surfaceflinger.rc
+index dfdd4aa38c..b4f8a6d137 100644
+--- a/services/surfaceflinger/surfaceflinger.rc
++++ b/services/surfaceflinger/surfaceflinger.rc
+@@ -1,3 +1,7 @@
++on post-fs-data
++    mkdir /data/burnout 0750 system system
++    restorecon /data/burnout
++
+ service surfaceflinger /system/bin/surfaceflinger
+     class core animation
+     user system

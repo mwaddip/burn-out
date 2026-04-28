@@ -1,16 +1,35 @@
-diff --git a/device.mk b/device.mk
-index 5caae93..18f7141 100644
---- a/device.mk
-+++ b/device.mk
-@@ -22,6 +22,11 @@ PRODUCT_COPY_FILES += \
- TARGET_SCREEN_HEIGHT := 3216
- TARGET_SCREEN_WIDTH := 1440
- 
-+# Burn-out compensation factory defaults
-+PRODUCT_COPY_FILES += \
-+    $(LOCAL_PATH)/burnout/mask.png:system/etc/burnout/mask.png \
-+    $(LOCAL_PATH)/burnout/zones.json:system/etc/burnout/zones.json
+diff --git a/burnout/burnout.mk b/burnout/burnout.mk
+new file mode 100644
+index 00000000..3454083c
+--- /dev/null
++++ b/burnout/burnout.mk
+@@ -0,0 +1,29 @@
++# Burn-out compensation — factory bake-in target (multi-device template).
++#
++# Include this from your device's makefile after setting BURNOUT_FB_WIDTH and
++# BURNOUT_FB_HEIGHT to your device's framebuffer dimensions. Example:
++#
++#   # In device/<vendor>/<device>/device.mk:
++#   BURNOUT_FB_WIDTH  := 1440
++#   BURNOUT_FB_HEIGHT := 3216
++#   include vendor/lineage/burnout/burnout.mk
++#
++# Factory assets in factory/mask.png + factory/zones.json must match
++# BURNOUT_FB_WIDTH x BURNOUT_FB_HEIGHT. The bundled defaults are sized
++# 1440x3216 (OnePlus 12). For other devices, regenerate before building:
++#
++#   bash <burn-out repo>/scripts/generate-blank-burnout-assets.sh \
++#     <fb_w> <fb_h> vendor/lineage/burnout/factory/
 +
- # Display
- PRODUCT_COPY_FILES += \
-     $(LOCAL_PATH)/configs/display/displayconfig.xml:$(TARGET_COPY_OUT_VENDOR)/etc/displayconfig/display_id_4630946450791512195.xml
++ifndef BURNOUT_FB_WIDTH
++$(error BURNOUT_FB_WIDTH not set; set it to your device's framebuffer width before including burnout.mk)
++endif
++ifndef BURNOUT_FB_HEIGHT
++$(error BURNOUT_FB_HEIGHT not set; set it to your device's framebuffer height before including burnout.mk)
++endif
++
++BURNOUT_LOCAL_PATH := $(call my-dir)
++
++PRODUCT_COPY_FILES += \
++    $(BURNOUT_LOCAL_PATH)/factory/mask.png:system/etc/burnout/mask.png \
++    $(BURNOUT_LOCAL_PATH)/factory/zones.json:system/etc/burnout/zones.json

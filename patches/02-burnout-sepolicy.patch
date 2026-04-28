@@ -1,5 +1,5 @@
 diff --git a/contexts/file_contexts_test_data b/contexts/file_contexts_test_data
-index 59745708d..b54edb05c 100644
+index 59745708d..83cd6419a 100644
 --- a/contexts/file_contexts_test_data
 +++ b/contexts/file_contexts_test_data
 @@ -1158,6 +1158,9 @@
@@ -12,8 +12,27 @@ index 59745708d..b54edb05c 100644
  /data/misc_de/0/sdksandbox                                        sdk_sandbox_system_data_file
  /data/misc_de/99/sdksandbox                                       sdk_sandbox_system_data_file
  /data/misc_ce/0/sdksandbox                                        sdk_sandbox_system_data_file
+diff --git a/private/burnout_app.te b/private/burnout_app.te
+new file mode 100644
+index 000000000..1e60261de
+--- /dev/null
++++ b/private/burnout_app.te
+@@ -0,0 +1,13 @@
++# Burn-out compensation system app — domain stub (Phase 2).
++#
++# This domain type is declared now so the future Burn-out app (Phase 3+)
++# can be associated with it via seapp_contexts without further sepolicy
++# patches needing to land. The seapp_contexts entry that maps the actual
++# `app.burnout` package to this domain is added in Phase 3 along with
++# the rules the app needs (set_prop, /data/burnout file access, etc.).
++#
++# In Phase 2, this declaration is dormant: no app runs in this domain,
++# no rules are attached. SELinux compiles the type into the policy
++# binary but it has no runtime effect.
++
++type burnout_app, domain, coredomain;
 diff --git a/private/file.te b/private/file.te
-index b832da44c..f6e4d8ead 100644
+index b832da44c..361f05cd1 100644
 --- a/private/file.te
 +++ b/private/file.te
 @@ -283,3 +283,6 @@ until_board_api(202604, `type sysfs_typec, fs_type, sysfs_type;')
@@ -24,7 +43,7 @@ index b832da44c..f6e4d8ead 100644
 +# /data/burnout — burn-out compensation mask + zones config
 +type burnout_data_file, file_type, data_file_type, core_data_file_type;
 diff --git a/private/file_contexts b/private/file_contexts
-index bc79eebf7..ee3f5e1ff 100644
+index bc79eebf7..425dc91df 100644
 --- a/private/file_contexts
 +++ b/private/file_contexts
 @@ -970,3 +970,7 @@
@@ -36,7 +55,7 @@ index bc79eebf7..ee3f5e1ff 100644
 +# Burn-out compensation (Phase 2)
 +/data/burnout(/.*)?      u:object_r:burnout_data_file:s0
 diff --git a/private/platform_app.te b/private/platform_app.te
-index 9e859f4c8..c4a992972 100644
+index 9e859f4c8..5f5726b46 100644
 --- a/private/platform_app.te
 +++ b/private/platform_app.te
 @@ -54,6 +54,9 @@ userdebug_or_eng(`
@@ -50,7 +69,7 @@ index 9e859f4c8..c4a992972 100644
  allow platform_app {
    proc_vmstat
 diff --git a/private/property.te b/private/property.te
-index a9e13a346..8372c5cb9 100644
+index a9e13a346..43785ad6a 100644
 --- a/private/property.te
 +++ b/private/property.te
 @@ -5,6 +5,7 @@ system_internal_prop(apexd_payload_metadata_prop)
@@ -62,7 +81,7 @@ index a9e13a346..8372c5cb9 100644
  system_internal_prop(ctl_prefetch_prop)
  system_internal_prop(ctl_uprobestats_prop)
 diff --git a/private/property_contexts b/private/property_contexts
-index b325c2ff0..330318676 100644
+index b325c2ff0..280c5e597 100644
 --- a/private/property_contexts
 +++ b/private/property_contexts
 @@ -1904,3 +1904,7 @@ ro.arm64.memtag.bootctl_supported u:object_r:arm64_memtag_bootctl_prop:s0 exact
@@ -74,7 +93,7 @@ index b325c2ff0..330318676 100644
 +persist.sys.burnout.        u:object_r:burnout_prop:s0
 +sys.burnout.                u:object_r:burnout_prop:s0
 diff --git a/private/surfaceflinger.te b/private/surfaceflinger.te
-index f4f64ce4a..d05948785 100644
+index f4f64ce4a..e1ee52e1e 100644
 --- a/private/surfaceflinger.te
 +++ b/private/surfaceflinger.te
 @@ -157,6 +157,13 @@ allow surfaceflinger surfaceflinger_data_file:file create_file_perms;
@@ -92,7 +111,7 @@ index f4f64ce4a..d05948785 100644
  ### Neverallow rules
  ###
 diff --git a/private/system_server.te b/private/system_server.te
-index d85caed61..dfcb35f1b 100644
+index d85caed61..c57ab62ce 100644
 --- a/private/system_server.te
 +++ b/private/system_server.te
 @@ -788,6 +788,7 @@ allow system_server server_configurable_flags_data_file:file r_file_perms;
