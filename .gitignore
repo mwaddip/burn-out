@@ -1,0 +1,11 @@
+# Build artifacts
+**/build/
+**/.gradle/
+**/.kotlin/
+*.iml
+.idea/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
