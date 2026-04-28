@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import com.topjohnwu.superuser.Shell
 
 /**
  * Application entry point. Observes ProcessLifecycleOwner to set sys.burnout.suspend
@@ -14,33 +13,26 @@ import com.topjohnwu.superuser.Shell
  * Calibrate's GL preview).
  *
  * Spec §2.4: "App sets sys.burnout.suspend=1 on ProcessLifecycleOwner foreground
- * (any activity in the app coming to front), clears =0 on background. This means
- * navigating Mark <-> Calibrate within the app stays suspended (no screen flash);
- * leaving the app entirely re-enables."
+ * (any activity in the app coming to front), clears =0 on background."
  *
  * In dev builds (debug-keyed), the app lacks platform signature, so a direct
- * SystemProperties.set hits a sepolicy denial. We shell out via libsu (Magisk root)
- * as a fallback. Phase 6's Soong build + seapp_contexts wiring will let the
- * platform-signed APK call SystemProperties directly without needing root.
+ * SystemProperties.set hits a sepolicy denial (untrusted_app domain can't write
+ * to property_service). We shell out via `su -c` (Magisk root). Magisk prompts
+ * the user the first time; subsequent calls are silent.
+ *
+ * Phase 6's Soong build + seapp_contexts wiring will let the platform-signed APK
+ * call SystemProperties directly without needing root.
  *
  * Failure modes:
- * - No root + no platform signature -> silent log warning, prop stays unset, SF
- *   correction continues (slightly wrong UX in Mark, no harm in Calibrate).
- * - libsu init slow on first call -> first foreground transition may take ~100ms
- *   to flip the prop; subsequent transitions are instant.
+ * - No Magisk root (su exits non-zero) -> silent log warning, prop stays unset,
+ *   SF correction continues. Mark UX gets the live correction filter applied —
+ *   user sees the corrected pattern instead of the raw test pattern, but the
+ *   overall flow still works.
  */
 class BurnoutApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-
-        // Tune libsu: short timeout, redirect stderr.
-        Shell.enableVerboseLogging = false
-        Shell.setDefaultBuilder(
-            Shell.Builder.create()
-                .setFlags(Shell.FLAG_REDIRECT_STDERR)
-                .setTimeout(5)
-        )
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
@@ -54,14 +46,25 @@ class BurnoutApp : Application() {
     }
 
     private fun setSuspendProp(value: String) {
-        try {
-            val result = Shell.cmd("setprop sys.burnout.suspend $value").exec()
-            if (!result.isSuccess) {
-                Log.w(TAG, "setprop sys.burnout.suspend=$value failed: ${result.err}")
+        // Run in a background thread — Runtime.exec + waitFor is blocking, and ON_START
+        // fires on the main thread; we don't want to stall it (esp. on first launch when
+        // Magisk may need to prompt for root grant).
+        Thread {
+            try {
+                val proc = Runtime.getRuntime().exec(
+                    arrayOf("su", "-c", "setprop sys.burnout.suspend $value")
+                )
+                val exitCode = proc.waitFor()
+                if (exitCode != 0) {
+                    val stderr = proc.errorStream.bufferedReader().use { it.readText() }
+                    Log.w(TAG, "su setprop sys.burnout.suspend=$value exit=$exitCode err=$stderr")
+                } else {
+                    Log.i(TAG, "sys.burnout.suspend=$value")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "su setprop sys.burnout.suspend=$value threw", t)
             }
-        } catch (t: Throwable) {
-            Log.w(TAG, "setprop sys.burnout.suspend=$value threw", t)
-        }
+        }.start()
     }
 
     companion object {

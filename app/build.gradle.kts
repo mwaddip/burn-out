@@ -42,9 +42,10 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     // ProcessLifecycleOwner — observe app foreground/background to set sys.burnout.suspend.
     implementation("androidx.lifecycle:lifecycle-process:2.8.7")
-    // libsu — shell out setprop via Magisk root in dev builds. Phase 6 platform signing
-    // replaces this with direct SystemProperties.set in the burnout_app sepolicy domain.
-    implementation("com.github.topjohnwu.libsu:core:5.2.2")
+    // setprop sys.burnout.suspend uses direct Runtime.exec("su", "-c", ...) in dev builds
+    // (BurnoutApp.kt). Magisk prompts the user once; subsequent calls are silent. Phase 6
+    // platform signing replaces this with direct SystemProperties.set in the burnout_app
+    // sepolicy domain.
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.0.21")
