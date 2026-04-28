@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Burn-out</string>
+    <string name="launcher_mark">Mark</string>
+    <string name="launcher_calibrate">Calibrate</string>
+    <string name="drag_handle">⠿  drag  ⠿</string>
+    <string name="fine_off">FINE: off</string>
+    <string name="fine_on">FINE: on</string>
+    <string name="clear_channel">CLEAR CH</string>
+    <string name="ab_hide_hold">A/B (hold)</string>
+    <string name="load_image">LOAD IMG</string>
+    <string name="stamp_image">STAMP IMG</string>
+    <string name="clear_image">CLEAR IMG</string>
+    <string name="stamp_mode_selected">CH: selected</string>
+    <string name="stamp_mode_all">CH: all</string>
+    <string name="move_target_cursor">MOVE: cursor</string>
+    <string name="move_target_image">MOVE: image</string>
+</resources>
