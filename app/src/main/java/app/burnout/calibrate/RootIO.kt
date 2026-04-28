@@ -19,7 +19,12 @@ object RootIO {
         val zonesSrc = "$stagingDir/$ZONES_NAME"
         val maskDst  = "$DATA_DIR/$MASK_NAME"
         val zonesDst = "$DATA_DIR/$ZONES_NAME"
+        // Dir chcon is idempotent vs. the boot-time surfaceflinger.rc mkdir; on a real burn-out ROM
+        // the dir already has the burnout_data_file label and this is a no-op. On the dev path
+        // (app-side fallback mkdir from inherited /data label), this fixes the dir's label so
+        // SF's `dir search` rule applies.
         return "mkdir -p $DATA_DIR && " +
+                "chcon u:object_r:burnout_data_file:s0 $DATA_DIR && " +
                 "cp $maskSrc $maskDst && " +
                 "cp $zonesSrc $zonesDst && " +
                 "chmod 644 $maskDst $zonesDst && " +
