@@ -39,10 +39,10 @@ echo "=== Applying burn-out patches ==="
 apply_patch "frameworks/native"       "01-burnout-renderengine.patch"  "BurnoutFilter + RenderEngine hook + HWC bypass"
 apply_patch "system/sepolicy"         "02-burnout-sepolicy.patch"      "Sepolicy: burnout_data_file + burnout_prop"
 apply_patch "frameworks/base"         "03-burnout-qstile.patch"        "QS tile: Burn-out Fix"
-apply_patch "device/oneplus/waffle"   "04-burnout-bake-in.patch"       "Bake-in factory burnout assets (Phase 1: OP12-specific)"
+apply_patch "vendor/lineage"          "04-burnout-bake-in.patch"       "Multi-device bake-in template at vendor/lineage/burnout/burnout.mk"
 
-# Copy factory burnout assets into the device tree so PRODUCT_COPY_FILES (patch 04) finds them.
-BURNOUT_DEST="$LINEAGE/device/oneplus/waffle/burnout"
+# Copy factory burnout assets into the bake-in template's factory/ subdir so PRODUCT_COPY_FILES finds them.
+BURNOUT_DEST="$LINEAGE/vendor/lineage/burnout/factory"
 mkdir -p "$BURNOUT_DEST"
 cp "$PATCHES/factory-burnout/mask.png" "$BURNOUT_DEST/mask.png"
 cp "$PATCHES/factory-burnout/zones.json" "$BURNOUT_DEST/zones.json"
