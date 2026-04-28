@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-04-26T22:08:03.203369Z",
+  "mask_w": 1440,
+  "mask_h": 3168,
+  "falloff_radius_px": 300,
+  "global_dim": 0.0800,
+  "zones": [
+    {"label": "top", "x0": 1144, "y0": 201, "x1": 1375, "y1": 291, "dim": 0.1950},
+    {"label": "bottom", "x0": 1267, "y0": 1697, "x1": 1384, "y1": 2674, "dim": 0.0850}
+  ],
+  "max_wear_per_channel": {
+    "r": 0.0000,
+    "g": 0.5020,
+    "b": 0.0000
+  },
+  "background_used": "white",
+  "panel_sim_on": false,
+  "panel_sim_wear_strength": 0.0000,
+  "correction_on": true
+}
