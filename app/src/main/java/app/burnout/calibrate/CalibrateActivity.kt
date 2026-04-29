@@ -36,6 +36,10 @@ class CalibrateActivity : AppCompatActivity() {
     private val maskLock = Object()
     private var server: MaskServer? = null
 
+    // Placeholder for Phase C; only IDLE is reachable until then.
+    private enum class AddState { IDLE, AWAITING_CORNER_1, AWAITING_CORNER_2 }
+    private var addState: AddState = AddState.IDLE
+
     private val bgPalette = intArrayOf(
         0xFFFFFFFF.toInt(), 0xFF808080.toInt(),
         0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFF0000FF.toInt(),
@@ -107,6 +111,7 @@ class CalibrateActivity : AppCompatActivity() {
                 state.pendingMask = bmp
                 syncSliderToSelectedZone()
                 updateStatus()
+                updateZoneButtonStates()
             }
         }
     }
@@ -247,7 +252,11 @@ class CalibrateActivity : AppCompatActivity() {
             override fun selectZone(index: Int) {
                 if (index in state.zones.indices) {
                     state.selectedZone = index
-                    runOnUiThread { syncSliderToSelectedZone(); updateStatus() }
+                    runOnUiThread {
+                        syncSliderToSelectedZone()
+                        updateStatus()
+                        updateZoneButtonStates()
+                    }
                 }
             }
             override fun setFalloffRadiusPx(value: Float) {
@@ -336,6 +345,7 @@ class CalibrateActivity : AppCompatActivity() {
                 state.selectedZone = (state.selectedZone + 1) % n
                 syncSliderToSelectedZone()
                 updateStatus()
+                updateZoneButtonStates()
             }
         }
 
@@ -443,7 +453,17 @@ class CalibrateActivity : AppCompatActivity() {
     }
 
     private fun updateZoneButtonStates() {
-        // Stub for now; Task B5 implements the full logic.
+        val n = state.zones.size
+        val atCap = n >= CorrectionState.MAX_ZONES
+        val haveSelected = n > 0
+        val bmp = state.maskBitmap
+        val canSplit = if (haveSelected && bmp != null && !atCap) {
+            Zones.canSplitZone(bmp, state.zones[state.selectedZone.coerceIn(0, n - 1)])
+        } else false
+
+        findViewById<Button>(R.id.btn_zone_add)?.isEnabled = !atCap || addState != AddState.IDLE
+        findViewById<Button>(R.id.btn_zone_del)?.isEnabled = haveSelected
+        findViewById<Button>(R.id.btn_zone_split)?.isEnabled = canSplit
     }
 
     companion object { private const val TAG = "CalibrateActivity" }
