@@ -46,10 +46,17 @@ class BurnoutApp : Application() {
     }
 
     private fun setSuspendProp(value: String) {
-        // Run in a background thread — Runtime.exec + waitFor is blocking, and ON_START
-        // fires on the main thread; we don't want to stall it (esp. on first launch when
-        // Magisk may need to prompt for root grant).
         Thread {
+            // Try direct SystemProperties.set first — works on platform-signed ROM-bundled
+            // builds where seapp_contexts routes the app into burnout_app domain with
+            // set_prop(burnout_prop). Throws on Gradle debug builds where the app runs
+            // in untrusted_app and SELinux denies the property write.
+            if (trySetPropDirect("sys.burnout.suspend", value)) {
+                Log.i(TAG, "sys.burnout.suspend=$value (direct)")
+                return@Thread
+            }
+            // Fallback: su shell. Magisk grants root after the user-prompt the first time;
+            // subsequent calls are silent.
             try {
                 val proc = Runtime.getRuntime().exec(
                     arrayOf("su", "-c", "setprop sys.burnout.suspend $value")
@@ -59,12 +66,25 @@ class BurnoutApp : Application() {
                     val stderr = proc.errorStream.bufferedReader().use { it.readText() }
                     Log.w(TAG, "su setprop sys.burnout.suspend=$value exit=$exitCode err=$stderr")
                 } else {
-                    Log.i(TAG, "sys.burnout.suspend=$value")
+                    Log.i(TAG, "sys.burnout.suspend=$value (su fallback)")
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "su setprop sys.burnout.suspend=$value threw", t)
             }
         }.start()
+    }
+
+    private fun trySetPropDirect(name: String, value: String): Boolean {
+        return try {
+            val cls = Class.forName("android.os.SystemProperties")
+            val m = cls.getMethod("set", String::class.java, String::class.java)
+            m.invoke(null, name, value)
+            true
+        } catch (t: Throwable) {
+            // Expected on Gradle debug builds (sepolicy denial wraps as RuntimeException).
+            Log.d(TAG, "direct set $name=$value failed: ${t.javaClass.simpleName}: ${t.message}")
+            false
+        }
     }
 
     companion object {
