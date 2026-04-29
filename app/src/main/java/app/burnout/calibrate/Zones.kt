@@ -194,6 +194,66 @@ object Zones {
         return maxOf(hLen, vLen) >= gapThreshold
     }
 
+    fun splitZone(mask: Bitmap, zone: Zone, gapThreshold: Int = 10): Pair<Zone, Zone>? {
+        val w = mask.width; val h = mask.height
+        val hGap = longestEmptyRowsRange(mask, zone.x0, zone.y0, zone.x1, zone.y1)
+        val vGap = longestEmptyColsRange(mask, zone.x0, zone.y0, zone.x1, zone.y1)
+        val hLen = hGap?.length ?: 0
+        val vLen = vGap?.length ?: 0
+        if (maxOf(hLen, vLen) < gapThreshold) return null
+
+        val splitH = hLen >= vLen   // tie → horizontal
+        val pad = PAD
+        val (a, b) = if (splitH) {
+            val mid = (hGap!!.start + hGap.end) / 2
+            // Top half: zone.x0..zone.x1, zone.y0..mid; refit to marks within.
+            val topRefit = refitToMarks(mask, zone.x0, zone.y0, zone.x1, mid, pad, w, h)
+            val botRefit = refitToMarks(mask, zone.x0, mid + 1, zone.x1, zone.y1, pad, w, h)
+            (topRefit ?: zoneWith(zone, zone.x0, zone.y0, zone.x1, mid)) to
+                (botRefit ?: zoneWith(zone, zone.x0, mid + 1, zone.x1, zone.y1))
+        } else {
+            val mid = (vGap!!.start + vGap.end) / 2
+            val leftRefit = refitToMarks(mask, zone.x0, zone.y0, mid, zone.y1, pad, w, h)
+            val rightRefit = refitToMarks(mask, mid + 1, zone.y0, zone.x1, zone.y1, pad, w, h)
+            (leftRefit ?: zoneWith(zone, zone.x0, zone.y0, mid, zone.y1)) to
+                (rightRefit ?: zoneWith(zone, mid + 1, zone.y0, zone.x1, zone.y1))
+        }
+        return zoneInheriting(zone, a) to zoneInheriting(zone, b)
+    }
+
+    // Refit a sub-rectangle of `mask` to its marks + `pad` (clamped to mask). Returns null if no marks.
+    private fun refitToMarks(
+        mask: Bitmap,
+        x0: Int, y0: Int, x1: Int, y1: Int,
+        pad: Int, w: Int, h: Int,
+    ): Zone? {
+        var minX = Int.MAX_VALUE; var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE; var maxY = Int.MIN_VALUE
+        for (y in y0..y1) {
+            for (x in x0..x1) {
+                val p = mask.getPixel(x, y)
+                if (((p shr 16) and 0xFF) != 0 || ((p shr 8) and 0xFF) != 0 || (p and 0xFF) != 0) {
+                    if (x < minX) minX = x; if (x > maxX) maxX = x
+                    if (y < minY) minY = y; if (y > maxY) maxY = y
+                }
+            }
+        }
+        if (minX == Int.MAX_VALUE) return null
+        val bx0 = (minX - pad).coerceAtLeast(0)
+        val by0 = (minY - pad).coerceAtLeast(0)
+        val bx1 = (maxX + pad).coerceAtMost(w - 1)
+        val by1 = (maxY + pad).coerceAtMost(h - 1)
+        // Caller will replace dim/channels via zoneInheriting; placeholder values are fine here.
+        return Zone(bx0, by0, bx1, by1, 0f, floatArrayOf(0f, 0f, 0f))
+    }
+
+    private fun zoneWith(parent: Zone, x0: Int, y0: Int, x1: Int, y1: Int): Zone =
+        Zone(x0, y0, x1, y1, 0f, floatArrayOf(0f, 0f, 0f))
+
+    private fun zoneInheriting(parent: Zone, src: Zone): Zone =
+        Zone(src.x0, src.y0, src.x1, src.y1, parent.dim,
+            floatArrayOf(parent.channels[0], parent.channels[1], parent.channels[2]))
+
     fun rectBboxFromMarks(
         mask: Bitmap,
         rx0: Int, ry0: Int, rx1: Int, ry1: Int,

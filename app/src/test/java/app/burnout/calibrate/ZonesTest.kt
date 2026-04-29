@@ -214,4 +214,31 @@ class ZonesTest {
         val parent = Zone(40, 40, 80, 80, 0.1f, floatArrayOf(0f, 1f, 0f))
         assertFalse(Zones.canSplitZone(bmp, parent))
     }
+
+    // ---- splitZone ----
+
+    @Test
+    fun splitZone_horizontal_gap_splits_top_bottom_with_inherited_metadata() {
+        val bmp = blank(200, 200)
+        // Top blob 50..60, bottom blob 91..101, gap rows 61..90 (30 rows, midpoint 75).
+        for (y in 50..60) for (x in 50..150) bmp.setPixel(x, y, Color.GREEN)
+        for (y in 91..101) for (x in 50..150) bmp.setPixel(x, y, Color.GREEN)
+        val parent = Zone(40, 40, 160, 111, 0.42f, floatArrayOf(0f, 1f, 0f))
+        val split = Zones.splitZone(bmp, parent)
+        assertNotNull(split)
+        val (top, bottom) = split!!
+        // Top half: marks 50..60 → bbox + 10 pad.
+        assertEquals(40, top.x0); assertEquals(40, top.y0)
+        assertEquals(160, top.x1); assertEquals(70, top.y1)
+        // Bottom half: marks 91..101 → bbox + 10 pad.
+        assertEquals(40, bottom.x0); assertEquals(81, bottom.y0)
+        assertEquals(160, bottom.x1); assertEquals(111, bottom.y1)
+        // Both halves inherit parent's dim and channel mask.
+        assertEquals(0.42f, top.dim, 0.001f); assertEquals(0.42f, bottom.dim, 0.001f)
+        assertEquals(1f, top.channels[1], 0.001f); assertEquals(1f, bottom.channels[1], 0.001f)
+        assertEquals(0f, top.channels[0], 0.001f); assertEquals(0f, bottom.channels[2], 0.001f)
+        // Channel arrays are independent (no aliasing).
+        top.channels[0] = 99f
+        assertEquals(0f, bottom.channels[0], 0.001f)
+    }
 }
