@@ -23,4 +23,10 @@
     <string name="calibrate_save_failed">Save failed (exit %1$d) — see logs</string>
     <string name="calibrate_export_ok">Exported to Download/burn-out/%1$s</string>
     <string name="calibrate_export_failed">Export failed: %1$s</string>
+    <string name="calibrate_zone_add">ADD</string>
+    <string name="calibrate_zone_del">DEL</string>
+    <string name="calibrate_zone_split">SPLIT</string>
+    <string name="calibrate_add_banner">Tap two opposite corners (tap ADD again to cancel)</string>
+    <string name="calibrate_add_no_marks">No marks in selection — paint first</string>
+    <string name="calibrate_at_cap">Zone cap reached (12)</string>
 </resources>
