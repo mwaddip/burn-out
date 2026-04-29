@@ -27,10 +27,10 @@ class DraggableOverlay(
             grabOffsetX = e.rawX - dragTarget.x
             grabOffsetY = e.rawY - dragTarget.y
             dragTarget.translationZ = 8f
-            // Visual + haptic confirmation that drag mode is engaged.
-            dragTarget.animate()
-                .scaleX(1.04f).scaleY(1.04f)
-                .setDuration(80L).start()
+            // Haptic confirmation that drag mode is engaged. Visual lift via the elevation
+            // shadow from translationZ. (We previously animated scale here, which interacted
+            // badly with LinearLayout's measure/layout when the view is repositioned via
+            // view.x/view.y — children below the first child stopped rendering.)
             touchTarget.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         }
     })
@@ -68,9 +68,6 @@ class DraggableOverlay(
                     if (dragging) {
                         dragging = false
                         dragTarget.translationZ = 0f
-                        dragTarget.animate()
-                            .scaleX(1f).scaleY(1f)
-                            .setDuration(80L).start()
                         prefs.edit()
                             .putString(prefKey(id), encodePosition(dragTarget.x.toInt(), dragTarget.y.toInt()))
                             .apply()
@@ -85,9 +82,10 @@ class DraggableOverlay(
 
     private fun clampToScreen(x: Float, y: Float): Pair<Float, Float> {
         val parent = dragTarget.parent as? View ?: return x to y
-        // Inset reporting on this device is unreliable (mandatorySystemGestures still returns ~33%
-        // of screen height as bottom inset). Use raw parent dimensions and only respect display
-        // cutout (the actual notch hole, which is real geometry not OS-policy).
+        // Only honor the actual display cutout (notch/hole-punch). System gesture insets
+        // over-report on some devices (OP12 returned ~33% of screen height), and the user's
+        // panel rendered fine at the bottom edge before DraggableOverlay was wired — so the
+        // raw parent dimensions match the visible area on this device.
         val cutout = parent.rootWindowInsets?.getInsets(WindowInsets.Type.displayCutout())
             ?: Insets.of(0, 0, 0, 0)
         val minX = cutout.left.toFloat()
