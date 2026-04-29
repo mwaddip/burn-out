@@ -112,6 +112,24 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
+            <Button android:id="@+id/btn_zone_add"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/calibrate_zone_add"/>
+            <Button android:id="@+id/btn_zone_del"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/calibrate_zone_del"/>
+            <Button android:id="@+id/btn_zone_split"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/calibrate_zone_split"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
             <Button android:id="@+id/btn_save"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
