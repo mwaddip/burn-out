@@ -19,7 +19,7 @@ index 847a88662b..a02542d30d 100644
          "skia/filters/GainmapFactory.cpp",
          "skia/filters/GaussianBlurFilter.cpp",
 diff --git a/libs/renderengine/skia/SkiaRenderEngine.cpp b/libs/renderengine/skia/SkiaRenderEngine.cpp
-index daa0ecc471..642c026b42 100644
+index daa0ecc471..c29bbbb6d2 100644
 --- a/libs/renderengine/skia/SkiaRenderEngine.cpp
 +++ b/libs/renderengine/skia/SkiaRenderEngine.cpp
 @@ -49,6 +49,7 @@
@@ -40,7 +40,7 @@ index daa0ecc471..642c026b42 100644
  #include <src/core/SkTraceEventCommon.h>
  #include <sync/sync.h>
  #include <ui/BlurRegion.h>
-@@ -354,6 +358,38 @@ SkiaRenderEngine::SkiaRenderEngine(Threaded threaded, PixelFormat pixelFormat,
+@@ -354,6 +358,42 @@ SkiaRenderEngine::SkiaRenderEngine(Threaded threaded, PixelFormat pixelFormat,
      }
  
      mCapture = std::make_unique<SkiaCapture>();
@@ -67,9 +67,13 @@ index daa0ecc471..642c026b42 100644
 +            }
 +            uint32_t newSerial = 0;
 +            struct timespec timeout = {2, 0};  // 2-second timeout so we check stop flag
-+            __system_property_wait(pi, serial, &newSerial, &timeout);
++            // bionic __system_property_wait returns false on timeout WITHOUT writing
++            // *new_serial_ptr. The earlier code trusted newSerial unconditionally and
++            // saw a phantom transition (initialized 0 != real serial), firing reload()
++            // every ~2 s and stalling the render thread on mLock during PNG decode.
++            const bool changed = __system_property_wait(pi, serial, &newSerial, &timeout);
 +            if (mBurnoutReloadStop.load(std::memory_order_relaxed)) break;
-+            if (newSerial != serial) {
++            if (changed && newSerial != serial) {
 +                serial = newSerial;
 +                ALOGI("BurnoutFilter: sys.burnout.reload changed, reloading config");
 +                if (mBurnoutFilter) mBurnoutFilter->reload();
@@ -79,7 +83,7 @@ index daa0ecc471..642c026b42 100644
  }
  
  SkiaRenderEngine::~SkiaRenderEngine() { }
-@@ -361,11 +397,19 @@ SkiaRenderEngine::~SkiaRenderEngine() { }
+@@ -361,11 +401,19 @@ SkiaRenderEngine::~SkiaRenderEngine() { }
  // To be called from backend dtors. Used to clean up Skia objects before GPU API contexts are
  // destroyed by subclasses.
  void SkiaRenderEngine::finishRenderingAndAbandonContexts() {
@@ -99,7 +103,7 @@ index daa0ecc471..642c026b42 100644
  
      // Leftover textures may hold refs to backend-specific Skia contexts, which must be released
      // before ~SkiaGpuContext is called.
-@@ -1354,6 +1398,22 @@ void SkiaRenderEngine::drawLayersInternal(
+@@ -1354,6 +1402,22 @@ void SkiaRenderEngine::drawLayersInternal(
      surfaceAutoSaveRestore.restore();
      mCapture->endCapture();
  
