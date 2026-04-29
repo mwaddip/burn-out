@@ -17,7 +17,9 @@ class CorrectionStateTest {
     fun defaults_match_spec_section_5_1() {
         val s = CorrectionState()
         assertEquals(300f, s.falloffRadiusPx, 0.001f)
-        assertEquals(0.08f, s.globalDim, 0.001f)
+        assertEquals("R baseline", 0.08f, s.globalDim[0], 0.001f)
+        assertEquals("G baseline", 0.08f, s.globalDim[1], 0.001f)
+        assertEquals("B baseline", 0.08f, s.globalDim[2], 0.001f)
         assertTrue("zones list defaults empty", s.zones.isEmpty())
         assertEquals(0, s.selectedZone)
     }
@@ -36,7 +38,7 @@ class CorrectionStateTest {
             Zone(150, 1000, 350, 1300, 0.085f),
         )
         s.falloffRadiusPx = 250f
-        s.globalDim = 0.07f
+        s.globalDim = floatArrayOf(0.07f, 0.05f, 0f)
         s.maxWearR = 0.0f; s.maxWearG = 0.5f; s.maxWearB = 0.0f
 
         val json = s.toJson()
@@ -44,9 +46,11 @@ class CorrectionStateTest {
         assertEquals(1440, parsed.getInt("mask_w"))
         assertEquals(3168, parsed.getInt("mask_h"))
         assertEquals(250, parsed.getInt("falloff_radius_px"))
-        assertEquals(0.07, parsed.getDouble("global_dim"), 0.001)
+        val gd = parsed.getJSONArray("global_dim")
+        assertEquals(0.07, gd.getDouble(0), 0.001)
+        assertEquals(0.05, gd.getDouble(1), 0.001)
+        assertEquals(0.0,  gd.getDouble(2), 0.001)
         assertEquals(2, parsed.getJSONArray("zones").length())
-        // Zones JSON uses Locale.US — no comma decimals.
         assertTrue("must be locale-US formatted", json.contains("0.07"))
         assertTrue("must not contain comma decimal", !json.contains("0,0700"))
     }
@@ -94,7 +98,7 @@ class CorrectionStateTest {
         original.maskWidth = 1440; original.maskHeight = 3168
         original.zones = listOf(Zone(100, 200, 300, 400, 0.195f))
         original.falloffRadiusPx = 250f
-        original.globalDim = 0.07f
+        original.globalDim = floatArrayOf(0.07f, 0.05f, 0.02f)
 
         val restored = CorrectionState()
         restored.fromJson(original.toJson())
@@ -105,6 +109,19 @@ class CorrectionStateTest {
         assertEquals(100, restored.zones[0].x0)
         assertEquals(0.195f, restored.zones[0].dim, 0.001f)
         assertEquals(250f, restored.falloffRadiusPx, 0.001f)
-        assertEquals(0.07f, restored.globalDim, 0.001f)
+        assertEquals(0.07f, restored.globalDim[0], 0.001f)
+        assertEquals(0.05f, restored.globalDim[1], 0.001f)
+        assertEquals(0.02f, restored.globalDim[2], 0.001f)
+    }
+
+    @Test
+    fun fromJson_legacy_scalar_global_dim_broadcasts_to_all_channels() {
+        val legacy = """{"mask_w":100,"mask_h":100,"falloff_radius_px":300,"global_dim":0.05,
+            "zones":[]}""".trimIndent()
+        val s = CorrectionState()
+        s.fromJson(legacy)
+        assertEquals(0.05f, s.globalDim[0], 0.001f)
+        assertEquals(0.05f, s.globalDim[1], 0.001f)
+        assertEquals(0.05f, s.globalDim[2], 0.001f)
     }
 }

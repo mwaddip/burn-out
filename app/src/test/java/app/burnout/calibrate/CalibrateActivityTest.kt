@@ -18,9 +18,8 @@ class CalibrateActivityTest {
         s.maskWidth = 1440; s.maskHeight = 3168
         s.zones = listOf(Zone(100, 200, 300, 400, 0.195f))
         s.falloffRadiusPx = 250f
-        s.globalDim = 0.07f
+        s.globalDim = floatArrayOf(0.07f, 0.07f, 0.07f)
         val json = s.toJson()
-        // No comma decimals (would happen under Locale.GERMANY).
         assertTrue("Locale.US decimals expected", json.contains("0.07"))
         assertTrue("no comma-decimal", !json.contains("0,0700"))
     }
@@ -44,7 +43,7 @@ class CalibrateActivityTest {
             Zone(i * 100, i * 200, i * 100 + 50, i * 200 + 50, 0.05f + i * 0.01f)
         }
         orig.falloffRadiusPx = 275f
-        orig.globalDim = 0.09f
+        orig.globalDim = floatArrayOf(0.09f, 0.06f, 0.03f)
 
         val json = orig.toJson()
         val restored = CorrectionState()
@@ -53,6 +52,9 @@ class CalibrateActivityTest {
         assertEquals(12, restored.zones.size)
         assertEquals(0.05f + 11 * 0.01f, restored.zones[11].dim, 0.001f)
         assertEquals(275f, restored.falloffRadiusPx, 0.01f)
+        assertEquals(0.09f, restored.globalDim[0], 0.001f)
+        assertEquals(0.06f, restored.globalDim[1], 0.001f)
+        assertEquals(0.03f, restored.globalDim[2], 0.001f)
     }
 
     @Test

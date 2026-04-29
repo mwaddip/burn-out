@@ -40,9 +40,9 @@ class CorrectionState {
     @Volatile var zones: List<Zone> = emptyList()
     @Volatile var selectedZone: Int = 0
 
-    // Spec §5.1 entry defaults: falloff=300, globalDim=0.08.
+    // Spec §5.1 entry defaults: falloff=300, globalDim=[0.08, 0.08, 0.08] per RGB channel.
     @Volatile var falloffRadiusPx: Float = 300f
-    @Volatile var globalDim: Float = 0.08f
+    @Volatile var globalDim: FloatArray = floatArrayOf(0.08f, 0.08f, 0.08f)
 
     fun toJson(): String {
         val zonesArr = JSONArray()
@@ -58,7 +58,10 @@ class CorrectionState {
             .put("mask_w", maskWidth)
             .put("mask_h", maskHeight)
             .put("falloff_radius_px", falloffRadiusPx.toInt())
-            .put("global_dim", "%.4f".format(Locale.US, globalDim).toDouble())
+            .put("global_dim", JSONArray()
+                .put("%.4f".format(Locale.US, globalDim[0]).toDouble())
+                .put("%.4f".format(Locale.US, globalDim[1]).toDouble())
+                .put("%.4f".format(Locale.US, globalDim[2]).toDouble()))
             .put("zones", zonesArr)
             .put("max_wear_per_channel", JSONObject()
                 .put("r", "%.4f".format(Locale.US, maxWearR).toDouble())
@@ -72,7 +75,18 @@ class CorrectionState {
         maskWidth = obj.optInt("mask_w", 0)
         maskHeight = obj.optInt("mask_h", 0)
         falloffRadiusPx = obj.optDouble("falloff_radius_px", 300.0).toFloat()
-        globalDim = obj.optDouble("global_dim", 0.08).toFloat()
+        // Back-compat: legacy presets stored global_dim as a scalar; new ones store an RGB array.
+        val gdArr = obj.optJSONArray("global_dim")
+        if (gdArr != null && gdArr.length() == 3) {
+            globalDim = floatArrayOf(
+                gdArr.getDouble(0).toFloat(),
+                gdArr.getDouble(1).toFloat(),
+                gdArr.getDouble(2).toFloat(),
+            )
+        } else {
+            val scalar = obj.optDouble("global_dim", 0.08).toFloat()
+            globalDim = floatArrayOf(scalar, scalar, scalar)
+        }
         val zarr = obj.optJSONArray("zones") ?: JSONArray()
         zones = (0 until zarr.length()).map { i ->
             val z = zarr.getJSONObject(i)

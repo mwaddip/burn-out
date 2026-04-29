@@ -13,7 +13,11 @@ object Zones {
         val size: Int,
     )
 
-    fun computeFromMask(mask: Bitmap, prev: List<Zone> = emptyList(), seedDim: Float = 0.08f): List<Zone> {
+    fun computeFromMask(
+        mask: Bitmap,
+        prev: List<Zone> = emptyList(),
+        seedDims: FloatArray = floatArrayOf(0.08f, 0.08f, 0.08f),
+    ): List<Zone> {
         val w = mask.width; val h = mask.height
         val px = IntArray(w * h); mask.getPixels(px, 0, w, 0, 0, w, h)
 
@@ -49,7 +53,7 @@ object Zones {
             val carriedDim = prev
                 .filter { it.channels[channelIdx] >= 0.5f }
                 .minByOrNull { kotlin.math.abs((it.y0 + it.y1) / 2 - cy) }
-                ?.dim ?: seedDim
+                ?.dim ?: seedDims[channelIdx]
             val channels = floatArrayOf(0f, 0f, 0f)
             channels[channelIdx] = 1f
             Zone(bx0, by0, bx1, by1, carriedDim, channels)
