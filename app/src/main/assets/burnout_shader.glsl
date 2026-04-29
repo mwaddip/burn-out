@@ -67,14 +67,14 @@ void main() {
             // Per-channel dim assembled as two independent terms:
             //   - zone term: only the dominant zone's painted channels, each channel mixed
             //     between its u_globalDim baseline and the zone's zd as zw goes 0→1.
-            //   - baseline term: channels that have global wear but aren't in the zone get only
-            //     their per-channel u_globalDim baseline.
-            // At zw=0 both terms collapse to globalCh * u_globalDim (per channel), so the boundary
-            // is continuous regardless of which zone is dominant.
-            vec3 globalCh = step(vec3(0.001), vec3(u_maxWearR, u_maxWearG, u_maxWearB));
-            vec3 nonZoneGlobalCh = clamp(globalCh - zoneCh, vec3(0.0), vec3(1.0));
+            //   - baseline term: channels NOT in the dominant zone get their per-channel u_globalDim.
+            // No global-wear gate on the baseline term — sliders are pure manual controls. A user can
+            // intentionally dim a clean (unworn) channel to compensate the panel for dimming on other
+            // channels (color rebalancing). Default slider value is 0, so unworn channels stay
+            // untouched unless explicitly tuned.
             vec3 zoneDimV = mix(u_globalDim, vec3(zd), zw);   // per-channel (each channel ramps independently)
-            vec3 dimV = clamp(zoneCh * zoneDimV + nonZoneGlobalCh * u_globalDim,
+            vec3 nonZoneCh = vec3(1.0) - zoneCh;
+            vec3 dimV = clamp(zoneCh * zoneDimV + nonZoneCh * u_globalDim,
                               vec3(0.0), vec3(0.99));
             outLin = lin * (vec3(1.0) - dimV);
         }
