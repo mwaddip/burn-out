@@ -353,6 +353,7 @@ class CalibrateActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btn_save).setOnClickListener { saveLive() }
         findViewById<Button>(R.id.btn_export).setOnClickListener { exportToDownloads() }
+        findViewById<Button>(R.id.btn_zone_del).setOnClickListener { deleteSelectedZone() }
     }
 
     private fun wireGlobalDimSlider(channelIdx: Int, seekId: Int) {
@@ -402,6 +403,22 @@ class CalibrateActivity : AppCompatActivity() {
             c.systemBarsBehavior =
                 android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+    }
+
+    private fun deleteSelectedZone() {
+        val zones = state.zones.toMutableList()
+        if (zones.isEmpty()) return
+        val idx = state.selectedZone.coerceIn(0, zones.size - 1)
+        zones.removeAt(idx)
+        state.zones = zones
+        state.selectedZone = if (zones.isEmpty()) 0 else (idx).coerceAtMost(zones.size - 1)
+        updateZoneButtonStates()
+        syncSliderToSelectedZone()
+        updateStatus()
+    }
+
+    private fun updateZoneButtonStates() {
+        // Stub for now; Task B5 implements the full logic.
     }
 
     companion object { private const val TAG = "CalibrateActivity" }
