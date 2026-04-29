@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.SeekBar
@@ -36,9 +37,11 @@ class CalibrateActivity : AppCompatActivity() {
     private val maskLock = Object()
     private var server: MaskServer? = null
 
-    // Placeholder for Phase C; only IDLE is reachable until then.
     private enum class AddState { IDLE, AWAITING_CORNER_1, AWAITING_CORNER_2 }
     private var addState: AddState = AddState.IDLE
+    private var corner1Mask: Pair<Int, Int>? = null
+    private lateinit var cornerOverlay: CornerOverlayView
+    private lateinit var addBanner: TextView
 
     private val bgPalette = intArrayOf(
         0xFFFFFFFF.toInt(), 0xFF808080.toInt(),
@@ -57,6 +60,15 @@ class CalibrateActivity : AppCompatActivity() {
         glView.setEGLContextClientVersion(3)
         glView.setRenderer(CorrectionRenderer(this, state))
         glView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+        glView.setOnTouchListener { _, ev ->
+            if (addState == AddState.IDLE) return@setOnTouchListener false
+            if (ev.actionMasked != MotionEvent.ACTION_DOWN) return@setOnTouchListener false
+            handleAddTap(ev.x, ev.y)
+            true
+        }
+
+        cornerOverlay = findViewById(R.id.corner_overlay)
+        addBanner = findViewById(R.id.add_banner)
 
         statusLine = findViewById(R.id.status_line)
         wireControls()
@@ -365,6 +377,9 @@ class CalibrateActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_export).setOnClickListener { exportToDownloads() }
         findViewById<Button>(R.id.btn_zone_del).setOnClickListener { deleteSelectedZone() }
         findViewById<Button>(R.id.btn_zone_split).setOnClickListener { splitSelectedZone() }
+        findViewById<Button>(R.id.btn_zone_add).setOnClickListener {
+            if (addState == AddState.IDLE) startAddMode() else cancelAddMode()
+        }
     }
 
     private fun wireGlobalDimSlider(channelIdx: Int, seekId: Int) {
@@ -464,6 +479,74 @@ class CalibrateActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_zone_add)?.isEnabled = !atCap || addState != AddState.IDLE
         findViewById<Button>(R.id.btn_zone_del)?.isEnabled = haveSelected
         findViewById<Button>(R.id.btn_zone_split)?.isEnabled = canSplit
+    }
+
+    private fun handleAddTap(viewX: Float, viewY: Float) {
+        val w = state.maskWidth
+        val h = state.maskHeight
+        if (w <= 0 || h <= 0) return
+        val mx = (viewX / glView.width * w).toInt().coerceIn(0, w - 1)
+        val my = (viewY / glView.height * h).toInt().coerceIn(0, h - 1)
+        when (addState) {
+            AddState.AWAITING_CORNER_1 -> {
+                corner1Mask = mx to my
+                addState = AddState.AWAITING_CORNER_2
+                cornerOverlay.update(corner1Mask, null, w, h)
+            }
+            AddState.AWAITING_CORNER_2 -> {
+                val c1 = corner1Mask
+                if (c1 == null) {
+                    cancelAddMode()
+                    return
+                }
+                cornerOverlay.update(c1, mx to my, w, h)
+                applyAddZone(c1.first, c1.second, mx, my)
+            }
+            AddState.IDLE -> { /* unreachable: setOnTouchListener short-circuits */ }
+        }
+    }
+
+    private fun applyAddZone(rx0: Int, ry0: Int, rx1: Int, ry1: Int) {
+        val bmp = state.maskBitmap ?: run { cancelAddMode(); return }
+        if (state.zones.size >= CorrectionState.MAX_ZONES) {
+            Toast.makeText(this, R.string.calibrate_at_cap, Toast.LENGTH_SHORT).show()
+            cancelAddMode()
+            return
+        }
+        val zone = Zones.rectBboxFromMarks(bmp, rx0, ry0, rx1, ry1, state.globalDim)
+        if (zone == null) {
+            Toast.makeText(this, R.string.calibrate_add_no_marks, Toast.LENGTH_SHORT).show()
+            cancelAddMode()
+            return
+        }
+        val zones = state.zones.toMutableList()
+        zones.add(zone)
+        val sorted = zones.sortedBy { (it.y0 + it.y1) / 2 }
+        state.zones = sorted
+        state.selectedZone = sorted.indexOf(zone).coerceAtLeast(0)
+        cancelAddMode()
+        syncSliderToSelectedZone()
+        updateStatus()
+        updateZoneButtonStates()
+    }
+
+    private fun startAddMode() {
+        if (state.zones.size >= CorrectionState.MAX_ZONES) {
+            Toast.makeText(this, R.string.calibrate_at_cap, Toast.LENGTH_SHORT).show()
+            return
+        }
+        addState = AddState.AWAITING_CORNER_1
+        corner1Mask = null
+        cornerOverlay.update(null, null, state.maskWidth, state.maskHeight)
+        addBanner.visibility = View.VISIBLE
+    }
+
+    private fun cancelAddMode() {
+        addState = AddState.IDLE
+        corner1Mask = null
+        cornerOverlay.update(null, null, state.maskWidth, state.maskHeight)
+        addBanner.visibility = View.GONE
+        updateZoneButtonStates()
     }
 
     companion object { private const val TAG = "CalibrateActivity" }
