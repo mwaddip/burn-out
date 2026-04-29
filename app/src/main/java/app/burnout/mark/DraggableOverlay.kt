@@ -85,16 +85,22 @@ class DraggableOverlay(
 
     private fun clampToScreen(x: Float, y: Float): Pair<Float, Float> {
         val parent = dragTarget.parent as? View ?: return x to y
-        // Use system-gesture insets so the panel doesn't render in the gesture-nav region at the
-        // bottom or in the back-swipe regions at the curved screen edges. Without this, the panel's
-        // x/y can be set to coordinates where its content is clipped or obscured by system gestures
-        // (especially noticeable on OP12 with curved-edge gesture-back at the sides).
-        val gesture = parent.rootWindowInsets?.getInsets(WindowInsets.Type.systemGestures())
+        // Use mandatorySystemGestures + displayCutout to keep the panel out of regions the app
+        // MUST respect (home/back swipe areas, notch). systemGestures() over-reports on some
+        // devices (the OP12 returns ~600px bottom, which would cut the draggable area in half).
+        val rootInsets = parent.rootWindowInsets
+        val gesture = rootInsets?.getInsets(WindowInsets.Type.mandatorySystemGestures())
             ?: Insets.of(0, 0, 0, 0)
-        val minX = gesture.left.toFloat()
-        val minY = gesture.top.toFloat()
-        val maxX = (parent.width  - gesture.right  - dragTarget.width ).toFloat().coerceAtLeast(minX)
-        val maxY = (parent.height - gesture.bottom - dragTarget.height).toFloat().coerceAtLeast(minY)
+        val cutout = rootInsets?.getInsets(WindowInsets.Type.displayCutout())
+            ?: Insets.of(0, 0, 0, 0)
+        val left   = maxOf(gesture.left,   cutout.left)
+        val top    = maxOf(gesture.top,    cutout.top)
+        val right  = maxOf(gesture.right,  cutout.right)
+        val bottom = maxOf(gesture.bottom, cutout.bottom)
+        val minX = left.toFloat()
+        val minY = top.toFloat()
+        val maxX = (parent.width  - right  - dragTarget.width ).toFloat().coerceAtLeast(minX)
+        val maxY = (parent.height - bottom - dragTarget.height).toFloat().coerceAtLeast(minY)
         return x.coerceIn(minX, maxX) to y.coerceIn(minY, maxY)
     }
 
