@@ -354,6 +354,7 @@ class CalibrateActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_save).setOnClickListener { saveLive() }
         findViewById<Button>(R.id.btn_export).setOnClickListener { exportToDownloads() }
         findViewById<Button>(R.id.btn_zone_del).setOnClickListener { deleteSelectedZone() }
+        findViewById<Button>(R.id.btn_zone_split).setOnClickListener { splitSelectedZone() }
     }
 
     private fun wireGlobalDimSlider(channelIdx: Int, seekId: Int) {
@@ -412,6 +413,30 @@ class CalibrateActivity : AppCompatActivity() {
         zones.removeAt(idx)
         state.zones = zones
         state.selectedZone = if (zones.isEmpty()) 0 else (idx).coerceAtMost(zones.size - 1)
+        updateZoneButtonStates()
+        syncSliderToSelectedZone()
+        updateStatus()
+    }
+
+    private fun splitSelectedZone() {
+        val bmp = state.maskBitmap ?: return
+        val zones = state.zones.toMutableList()
+        if (zones.isEmpty()) return
+        if (zones.size >= CorrectionState.MAX_ZONES) {
+            Toast.makeText(this, R.string.calibrate_at_cap, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val idx = state.selectedZone.coerceIn(0, zones.size - 1)
+        val parent = zones[idx]
+        val pair = Zones.splitZone(bmp, parent) ?: return
+        zones.removeAt(idx)
+        // Insert both halves at the same position; sort by Y center to keep top-to-bottom convention.
+        zones.add(idx, pair.first)
+        zones.add(idx + 1, pair.second)
+        val sorted = zones.sortedBy { (it.y0 + it.y1) / 2 }
+        state.zones = sorted
+        // Keep selection on the first half.
+        state.selectedZone = sorted.indexOf(pair.first).coerceAtLeast(0)
         updateZoneButtonStates()
         syncSliderToSelectedZone()
         updateStatus()
