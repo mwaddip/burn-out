@@ -6,7 +6,7 @@ object Zones {
     const val PAD = 10
     private const val CLUSTER_MERGE_PX = 200
     private const val MIN_CLUSTER_PIXELS = 50
-    private const val MAX_ZONES = CorrectionState.MAX_ZONES   // 8
+    private const val MAX_ZONES = CorrectionState.MAX_ZONES
 
     private data class Component(
         val x0: Int, val y0: Int, val x1: Int, val y1: Int,
