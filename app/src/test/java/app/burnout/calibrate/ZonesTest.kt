@@ -3,6 +3,7 @@ package app.burnout.calibrate
 import android.graphics.Bitmap
 import android.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -123,5 +124,26 @@ class ZonesTest {
         val gd = floatArrayOf(0.08f, 0.08f, 0.08f)
         val zone = Zones.rectBboxFromMarks(bmp, 100, 100, 150, 150, gd)
         assertNull("rectangle with no marks must return null", zone)
+    }
+
+    @Test
+    fun rectBboxFromMarks_single_channel_returns_tight_bbox_with_pad() {
+        val bmp = blank(200, 200)
+        // 21x21 G blob at (50..70, 50..70).
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
+        // User selects a generous rectangle around it.
+        val gd = floatArrayOf(0.10f, 0.20f, 0.30f)
+        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 100, 100, gd)
+        assertNotNull(zone)
+        zone!!
+        // Tight bbox 50..70 + 10px pad → 40..80.
+        assertEquals(40, zone.x0); assertEquals(40, zone.y0)
+        assertEquals(80, zone.x1); assertEquals(80, zone.y1)
+        // Only G is flagged.
+        assertEquals(0f, zone.channels[0], 0.001f)
+        assertEquals(1f, zone.channels[1], 0.001f)
+        assertEquals(0f, zone.channels[2], 0.001f)
+        // Initial dim = globalDim[G] since only G is present.
+        assertEquals(0.20f, zone.dim, 0.001f)
     }
 }
