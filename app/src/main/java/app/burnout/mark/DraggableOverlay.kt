@@ -85,22 +85,15 @@ class DraggableOverlay(
 
     private fun clampToScreen(x: Float, y: Float): Pair<Float, Float> {
         val parent = dragTarget.parent as? View ?: return x to y
-        // Use mandatorySystemGestures + displayCutout to keep the panel out of regions the app
-        // MUST respect (home/back swipe areas, notch). systemGestures() over-reports on some
-        // devices (the OP12 returns ~600px bottom, which would cut the draggable area in half).
-        val rootInsets = parent.rootWindowInsets
-        val gesture = rootInsets?.getInsets(WindowInsets.Type.mandatorySystemGestures())
+        // Inset reporting on this device is unreliable (mandatorySystemGestures still returns ~33%
+        // of screen height as bottom inset). Use raw parent dimensions and only respect display
+        // cutout (the actual notch hole, which is real geometry not OS-policy).
+        val cutout = parent.rootWindowInsets?.getInsets(WindowInsets.Type.displayCutout())
             ?: Insets.of(0, 0, 0, 0)
-        val cutout = rootInsets?.getInsets(WindowInsets.Type.displayCutout())
-            ?: Insets.of(0, 0, 0, 0)
-        val left   = maxOf(gesture.left,   cutout.left)
-        val top    = maxOf(gesture.top,    cutout.top)
-        val right  = maxOf(gesture.right,  cutout.right)
-        val bottom = maxOf(gesture.bottom, cutout.bottom)
-        val minX = left.toFloat()
-        val minY = top.toFloat()
-        val maxX = (parent.width  - right  - dragTarget.width ).toFloat().coerceAtLeast(minX)
-        val maxY = (parent.height - bottom - dragTarget.height).toFloat().coerceAtLeast(minY)
+        val minX = cutout.left.toFloat()
+        val minY = cutout.top.toFloat()
+        val maxX = (parent.width  - cutout.right  - dragTarget.width ).toFloat().coerceAtLeast(minX)
+        val maxY = (parent.height - cutout.bottom - dragTarget.height).toFloat().coerceAtLeast(minY)
         return x.coerceIn(minX, maxX) to y.coerceIn(minY, maxY)
     }
 
