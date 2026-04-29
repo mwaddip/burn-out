@@ -9,6 +9,26 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <app.burnout.calibrate.CornerOverlayView
+        android:id="@+id/corner_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="false"
+        android:focusable="false" />
+
+    <TextView
+        android:id="@+id/add_banner"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="48dp"
+        android:padding="10dp"
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:background="#C0CC8800"
+        android:visibility="gone"
+        android:text="@string/calibrate_add_banner" />
+
     <TextView
         android:id="@+id/status_line"
         android:layout_width="wrap_content"
