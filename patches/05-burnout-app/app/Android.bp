@@ -1,0 +1,37 @@
+//
+// SPDX-FileCopyrightText: 2026 The burn-out project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+android_app {
+    name: "Burnout",
+
+    srcs: ["src/main/java/**/*.kt"],
+    resource_dirs: ["src/main/res"],
+    asset_dirs: ["src/main/assets"],
+    manifest: "AndroidManifest.xml",
+
+    certificate: "platform",
+    platform_apis: true,
+
+    // NOT privileged: true. The burnout_app SELinux domain + platform signing
+    // gives us all the access we need; privapp would force the app under
+    // /system/priv-app/ and require an additional privapp_allowlist file.
+
+    static_libs: [
+        "androidx.core_core-ktx",
+        "androidx.appcompat_appcompat",
+        "androidx.lifecycle_lifecycle-process",
+        "androidx.lifecycle_lifecycle-runtime",
+        "androidx.lifecycle_lifecycle-runtime-ktx",
+        "androidx.lifecycle_lifecycle-common",
+        "androidx.lifecycle_lifecycle-common-java8",
+        "kotlin-stdlib",
+    ],
+
+    kotlincflags: ["-Xjvm-default=all"],
+
+    optimize: {
+        enabled: false,
+    },
+}

@@ -48,4 +48,17 @@ cp "$PATCHES/factory-burnout/mask.png" "$BURNOUT_DEST/mask.png"
 cp "$PATCHES/factory-burnout/zones.json" "$BURNOUT_DEST/zones.json"
 echo "[ok]   Factory assets - copied to $BURNOUT_DEST/"
 
+# Copy 05-burnout-app/ tree into vendor/lineage/burnout/app/ (Soong build module).
+# Applied via rsync, NOT git apply: this is a fresh-tree-only addition with no
+# upstream files to merge against, and the source tree carries 25+ files.
+APP_SRC="$PATCHES/05-burnout-app/app"
+APP_DEST="$LINEAGE/vendor/lineage/burnout/app"
+if [[ -d "$APP_SRC" ]]; then
+    mkdir -p "$APP_DEST"
+    rsync -a --delete "$APP_SRC/" "$APP_DEST/"
+    echo "[ok]   Soong app mirror - copied to $APP_DEST/"
+else
+    echo "[warn] $APP_SRC not found; Soong build module not installed" >&2
+fi
+
 echo "=== All patches applied ==="
