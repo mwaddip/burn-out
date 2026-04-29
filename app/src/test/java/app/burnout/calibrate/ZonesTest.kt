@@ -67,16 +67,38 @@ class ZonesTest {
     }
 
     @Test
-    fun zone_channel_mask_unions_when_two_channels_painted_in_one_cluster() {
+    fun two_channels_painted_adjacent_yield_two_zones_one_per_channel() {
         val bmp = blank(200, 200)
-        // R and G painted within the cluster-merge distance — same zone.
+        // R and G painted in adjacent regions. Per-channel CC means TWO zones, each single-channel.
         for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.RED)
         for (y in 80..100) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
         val zones = Zones.computeFromMask(bmp)
-        assertEquals(1, zones.size)
-        assertEquals(1f, zones[0].channels[0], 0.001f)
-        assertEquals(1f, zones[0].channels[1], 0.001f)
-        assertEquals(0f, zones[0].channels[2], 0.001f)
+        assertEquals(2, zones.size)
+        // Each zone has exactly one channel set.
+        for (z in zones) {
+            val sum = z.channels.sum()
+            assertEquals("zone must have exactly one channel set", 1f, sum, 0.001f)
+        }
+        // The R zone (top, y=50-70 → centerY ≈ 60) sorts first; G zone (y=80-100 → ≈ 90) second.
+        assertEquals(1f, zones[0].channels[0], 0.001f)  // R first
+        assertEquals(1f, zones[1].channels[1], 0.001f)  // G second
+    }
+
+    @Test
+    fun two_channels_overlapping_yield_two_zones_with_overlapping_bbox() {
+        val bmp = blank(200, 200)
+        // Same area painted in both R and G (e.g. yellow paint pattern).
+        for (y in 50..70) for (x in 50..70) {
+            bmp.setPixel(x, y, Color.argb(255, 200, 200, 0))   // R+G, no B
+        }
+        val zones = Zones.computeFromMask(bmp)
+        assertEquals(2, zones.size)
+        // R zone and G zone have the same bbox (same painted pixels).
+        assertEquals(zones[0].x0, zones[1].x0); assertEquals(zones[0].x1, zones[1].x1)
+        assertEquals(zones[0].y0, zones[1].y0); assertEquals(zones[0].y1, zones[1].y1)
+        // Each is single-channel.
+        assertEquals(1f, zones[0].channels.sum(), 0.001f)
+        assertEquals(1f, zones[1].channels.sum(), 0.001f)
     }
 
     @Test

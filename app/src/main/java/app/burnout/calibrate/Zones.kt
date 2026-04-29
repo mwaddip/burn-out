@@ -11,52 +11,56 @@ object Zones {
     private data class Component(
         val x0: Int, val y0: Int, val x1: Int, val y1: Int,
         val size: Int,
-        val hasR: Boolean, val hasG: Boolean, val hasB: Boolean,
     )
 
     fun computeFromMask(mask: Bitmap, prev: List<Zone> = emptyList(), seedDim: Float = 0.08f): List<Zone> {
         val w = mask.width; val h = mask.height
-        val comps = connectedComponents(mask); if (comps.isEmpty()) return emptyList()
+        val px = IntArray(w * h); mask.getPixels(px, 0, w, 0, 0, w, h)
 
-        val clusters = clusterComponents(comps, CLUSTER_MERGE_PX)
-            .filter { group -> group.sumOf { it.size } >= MIN_CLUSTER_PIXELS }
-            .sortedByDescending { it.sumOf { c -> c.size } }
+        // Run connected-components 3 times — once per channel — so that R-paint and G-paint at the
+        // same location yield TWO separate zones (each with a single-channel mask). The dominant-zone
+        // logic in the shader handles spatial overlap by picking whichever has higher falloff weight.
+        val perChannelClusters = (0..2).flatMap { ch ->
+            val comps = connectedComponentsForChannel(px, w, h, ch)
+            if (comps.isEmpty()) return@flatMap emptyList<Pair<List<Component>, Int>>()
+            clusterComponents(comps, CLUSTER_MERGE_PX)
+                .filter { group -> group.sumOf { it.size } >= MIN_CLUSTER_PIXELS }
+                .map { group -> group to ch }
+        }
+
+        val topClusters = perChannelClusters
+            .sortedByDescending { (group, _) -> group.sumOf { c -> c.size } }
             .take(MAX_ZONES)
 
-        return clusters.map { group ->
+        return topClusters.map { (group, channelIdx) ->
             var x0 = Int.MAX_VALUE; var y0 = Int.MAX_VALUE
             var x1 = Int.MIN_VALUE; var y1 = Int.MIN_VALUE
-            var hasR = false; var hasG = false; var hasB = false
             for (c in group) {
                 if (c.x0 < x0) x0 = c.x0; if (c.y0 < y0) y0 = c.y0
                 if (c.x1 > x1) x1 = c.x1; if (c.y1 > y1) y1 = c.y1
-                if (c.hasR) hasR = true
-                if (c.hasG) hasG = true
-                if (c.hasB) hasB = true
             }
             val bx0 = (x0 - PAD).coerceAtLeast(0)
             val by0 = (y0 - PAD).coerceAtLeast(0)
             val bx1 = (x1 + PAD).coerceAtMost(w - 1)
             val by1 = (y1 + PAD).coerceAtMost(h - 1)
             val cy = (by0 + by1) / 2
-            val carriedDim = prev.minByOrNull { kotlin.math.abs((it.y0 + it.y1) / 2 - cy) }?.dim ?: seedDim
-            val channels = floatArrayOf(
-                if (hasR) 1f else 0f,
-                if (hasG) 1f else 0f,
-                if (hasB) 1f else 0f,
-            )
+            // Carry forward dim from the closest previous zone of the SAME channel, so re-detection
+            // doesn't drop the user's per-zone tuning when they re-enter Calibrate.
+            val carriedDim = prev
+                .filter { it.channels[channelIdx] >= 0.5f }
+                .minByOrNull { kotlin.math.abs((it.y0 + it.y1) / 2 - cy) }
+                ?.dim ?: seedDim
+            val channels = floatArrayOf(0f, 0f, 0f)
+            channels[channelIdx] = 1f
             Zone(bx0, by0, bx1, by1, carriedDim, channels)
         }.sortedBy { (it.y0 + it.y1) / 2 }
     }
 
-    private fun connectedComponents(mask: Bitmap): List<Component> {
-        val w = mask.width; val h = mask.height
-        val px = IntArray(w * h); mask.getPixels(px, 0, w, 0, 0, w, h)
+    private fun connectedComponentsForChannel(px: IntArray, w: Int, h: Int, channelIdx: Int): List<Component> {
+        val shift = when (channelIdx) { 0 -> 16; 1 -> 8; else -> 0 }
         val marked = BooleanArray(px.size)
         for (i in px.indices) {
-            val p = px[i]
-            val any = ((p shr 16) and 0xFF) or ((p shr 8) and 0xFF) or (p and 0xFF)
-            marked[i] = any != 0
+            marked[i] = ((px[i] shr shift) and 0xFF) != 0
         }
         val visited = BooleanArray(px.size)
         val out = ArrayList<Component>()
@@ -66,17 +70,12 @@ object Zones {
             var qHead = 0; var qTail = 0
             queue[qTail++] = seed; visited[seed] = true
             var x0 = seed % w; var y0 = seed / w; var x1 = x0; var y1 = y0; var count = 0
-            var hasR = false; var hasG = false; var hasB = false
             while (qHead < qTail) {
                 val idx = queue[qHead++]
                 count++
                 val cx = idx % w; val cy = idx / w
                 if (cx < x0) x0 = cx; if (cx > x1) x1 = cx
                 if (cy < y0) y0 = cy; if (cy > y1) y1 = cy
-                val p = px[idx]
-                if (((p shr 16) and 0xFF) != 0) hasR = true
-                if (((p shr  8) and 0xFF) != 0) hasG = true
-                if (( p         and 0xFF) != 0) hasB = true
                 for (dy in -1..1) {
                     val ny = cy + dy
                     if (ny < 0 || ny >= h) continue
@@ -92,7 +91,7 @@ object Zones {
                     }
                 }
             }
-            out.add(Component(x0, y0, x1, y1, count, hasR, hasG, hasB))
+            out.add(Component(x0, y0, x1, y1, count))
         }
         return out
     }
