@@ -55,6 +55,31 @@ class ZonesTest {
     }
 
     @Test
+    fun zone_channel_mask_reflects_painted_channels() {
+        val bmp = blank(200, 200)
+        // Paint only G in this blob.
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
+        val zones = Zones.computeFromMask(bmp)
+        assertEquals(1, zones.size)
+        assertEquals("R should not be flagged", 0f, zones[0].channels[0], 0.001f)
+        assertEquals("G should be flagged",     1f, zones[0].channels[1], 0.001f)
+        assertEquals("B should not be flagged", 0f, zones[0].channels[2], 0.001f)
+    }
+
+    @Test
+    fun zone_channel_mask_unions_when_two_channels_painted_in_one_cluster() {
+        val bmp = blank(200, 200)
+        // R and G painted within the cluster-merge distance — same zone.
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.RED)
+        for (y in 80..100) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
+        val zones = Zones.computeFromMask(bmp)
+        assertEquals(1, zones.size)
+        assertEquals(1f, zones[0].channels[0], 0.001f)
+        assertEquals(1f, zones[0].channels[1], 0.001f)
+        assertEquals(0f, zones[0].channels[2], 0.001f)
+    }
+
+    @Test
     fun zones_sorted_top_to_bottom() {
         val bmp = blank(200, 1000)
         // Bottom blob first by index, top blob second

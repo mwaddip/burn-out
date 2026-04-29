@@ -8,7 +8,11 @@ object Zones {
     private const val MIN_CLUSTER_PIXELS = 50
     private const val MAX_ZONES = CorrectionState.MAX_ZONES   // 8
 
-    private data class Component(val x0: Int, val y0: Int, val x1: Int, val y1: Int, val size: Int)
+    private data class Component(
+        val x0: Int, val y0: Int, val x1: Int, val y1: Int,
+        val size: Int,
+        val hasR: Boolean, val hasG: Boolean, val hasB: Boolean,
+    )
 
     fun computeFromMask(mask: Bitmap, prev: List<Zone> = emptyList(), seedDim: Float = 0.08f): List<Zone> {
         val w = mask.width; val h = mask.height
@@ -22,9 +26,13 @@ object Zones {
         return clusters.map { group ->
             var x0 = Int.MAX_VALUE; var y0 = Int.MAX_VALUE
             var x1 = Int.MIN_VALUE; var y1 = Int.MIN_VALUE
+            var hasR = false; var hasG = false; var hasB = false
             for (c in group) {
                 if (c.x0 < x0) x0 = c.x0; if (c.y0 < y0) y0 = c.y0
                 if (c.x1 > x1) x1 = c.x1; if (c.y1 > y1) y1 = c.y1
+                if (c.hasR) hasR = true
+                if (c.hasG) hasG = true
+                if (c.hasB) hasB = true
             }
             val bx0 = (x0 - PAD).coerceAtLeast(0)
             val by0 = (y0 - PAD).coerceAtLeast(0)
@@ -32,7 +40,12 @@ object Zones {
             val by1 = (y1 + PAD).coerceAtMost(h - 1)
             val cy = (by0 + by1) / 2
             val carriedDim = prev.minByOrNull { kotlin.math.abs((it.y0 + it.y1) / 2 - cy) }?.dim ?: seedDim
-            Zone(bx0, by0, bx1, by1, carriedDim)
+            val channels = floatArrayOf(
+                if (hasR) 1f else 0f,
+                if (hasG) 1f else 0f,
+                if (hasB) 1f else 0f,
+            )
+            Zone(bx0, by0, bx1, by1, carriedDim, channels)
         }.sortedBy { (it.y0 + it.y1) / 2 }
     }
 
@@ -53,12 +66,17 @@ object Zones {
             var qHead = 0; var qTail = 0
             queue[qTail++] = seed; visited[seed] = true
             var x0 = seed % w; var y0 = seed / w; var x1 = x0; var y1 = y0; var count = 0
+            var hasR = false; var hasG = false; var hasB = false
             while (qHead < qTail) {
                 val idx = queue[qHead++]
                 count++
                 val cx = idx % w; val cy = idx / w
                 if (cx < x0) x0 = cx; if (cx > x1) x1 = cx
                 if (cy < y0) y0 = cy; if (cy > y1) y1 = cy
+                val p = px[idx]
+                if (((p shr 16) and 0xFF) != 0) hasR = true
+                if (((p shr  8) and 0xFF) != 0) hasG = true
+                if (( p         and 0xFF) != 0) hasB = true
                 for (dy in -1..1) {
                     val ny = cy + dy
                     if (ny < 0 || ny >= h) continue
@@ -74,7 +92,7 @@ object Zones {
                     }
                 }
             }
-            out.add(Component(x0, y0, x1, y1, count))
+            out.add(Component(x0, y0, x1, y1, count, hasR, hasG, hasB))
         }
         return out
     }

@@ -52,6 +52,43 @@ class CorrectionStateTest {
     }
 
     @Test
+    fun toJson_includes_per_zone_channels() {
+        val s = CorrectionState()
+        s.maskWidth = 100; s.maskHeight = 100
+        s.zones = listOf(Zone(0, 0, 10, 10, 0.1f, floatArrayOf(0f, 1f, 0f)))
+        val parsed = JSONObject(s.toJson())
+        val z0 = parsed.getJSONArray("zones").getJSONObject(0)
+        val ch = z0.getJSONArray("channels")
+        assertEquals(0, ch.getInt(0))
+        assertEquals(1, ch.getInt(1))
+        assertEquals(0, ch.getInt(2))
+    }
+
+    @Test
+    fun fromJson_with_channels_roundtrips() {
+        val orig = CorrectionState()
+        orig.maskWidth = 100; orig.maskHeight = 100
+        orig.zones = listOf(Zone(0, 0, 10, 10, 0.1f, floatArrayOf(1f, 0f, 1f)))
+        val restored = CorrectionState()
+        restored.fromJson(orig.toJson())
+        assertEquals(1f, restored.zones[0].channels[0], 0.001f)
+        assertEquals(0f, restored.zones[0].channels[1], 0.001f)
+        assertEquals(1f, restored.zones[0].channels[2], 0.001f)
+    }
+
+    @Test
+    fun fromJson_legacy_preset_without_channels_defaults_all_ones() {
+        val legacy = """{"mask_w":100,"mask_h":100,"falloff_radius_px":300,"global_dim":0.08,
+            "zones":[{"x0":0,"y0":0,"x1":10,"y1":10,"dim":0.1}]}""".trimIndent()
+        val s = CorrectionState()
+        s.fromJson(legacy)
+        assertEquals(1, s.zones.size)
+        assertEquals(1f, s.zones[0].channels[0], 0.001f)
+        assertEquals(1f, s.zones[0].channels[1], 0.001f)
+        assertEquals(1f, s.zones[0].channels[2], 0.001f)
+    }
+
+    @Test
     fun fromJson_roundtrip_restores_state() {
         val original = CorrectionState()
         original.maskWidth = 1440; original.maskHeight = 3168

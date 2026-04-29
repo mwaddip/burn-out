@@ -9,6 +9,9 @@ class Zone(
     val x0: Int, val y0: Int,
     val x1: Int, val y1: Int,
     initialDim: Float,
+    // Per-zone channel-has-wear mask (RGB), 0f or 1f per channel.
+    // Default all-channels-wearing for back-compat with legacy presets that lack the field.
+    val channels: FloatArray = floatArrayOf(1f, 1f, 1f),
 ) {
     @Volatile var dim: Float = initialDim
     fun containsPx(px: Int, py: Int) = px in x0..x1 && py in y0..y1
@@ -47,7 +50,9 @@ class CorrectionState {
             zonesArr.put(JSONObject()
                 .put("x0", z.x0).put("y0", z.y0)
                 .put("x1", z.x1).put("y1", z.y1)
-                .put("dim", "%.4f".format(Locale.US, z.dim).toDouble()))
+                .put("dim", "%.4f".format(Locale.US, z.dim).toDouble())
+                .put("channels", JSONArray()
+                    .put(z.channels[0].toInt()).put(z.channels[1].toInt()).put(z.channels[2].toInt())))
         }
         val obj = JSONObject()
             .put("mask_w", maskWidth)
@@ -71,10 +76,18 @@ class CorrectionState {
         val zarr = obj.optJSONArray("zones") ?: JSONArray()
         zones = (0 until zarr.length()).map { i ->
             val z = zarr.getJSONObject(i)
+            val ch = z.optJSONArray("channels")
+            val channels = if (ch != null && ch.length() == 3) {
+                floatArrayOf(ch.getInt(0).toFloat(), ch.getInt(1).toFloat(), ch.getInt(2).toFloat())
+            } else {
+                // Legacy preset without channels — assume all channels worn (matches old global gate).
+                floatArrayOf(1f, 1f, 1f)
+            }
             Zone(
                 z.getInt("x0"), z.getInt("y0"),
                 z.getInt("x1"), z.getInt("y1"),
                 z.getDouble("dim").toFloat(),
+                channels,
             )
         }.take(MAX_ZONES)
         obj.optJSONObject("max_wear_per_channel")?.let { mw ->
