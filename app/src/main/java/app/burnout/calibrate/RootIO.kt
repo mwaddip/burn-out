@@ -44,14 +44,43 @@ object RootIO {
         File(stagingDir, ZONES_NAME).writeText(zonesJson, Charsets.UTF_8)
 
         val epoch = System.currentTimeMillis() / 1000L
+
+        // Try direct file IO first — works on platform-signed ROM-bundled APK where
+        // sharedUserId="android.uid.system" lets the app write to /data/burnout/ (DAC),
+        // and burnout_app SELinux domain permits create_file_perms (MAC).
+        val direct = tryCommitDirect(maskBytes, zonesJson, epoch)
+        if (direct.outcome == Outcome.OK) return direct
+
+        // Fallback: chained su shell. Magisk grants root after first user-prompt;
+        // subsequent calls are silent.
         val cmd = buildCommitCommand(stagingDir.absolutePath, epoch)
         Log.i(TAG, "su -c \"%s\"".format(Locale.US, cmd))
-
         val proc = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
         val stderr = proc.errorStream.bufferedReader().readText()
         val exit = proc.waitFor()
         val outcome = classify(exit, stderr)
         if (outcome != Outcome.OK) Log.e(TAG, "commit failed exit=$exit stderr=$stderr")
         return Result(outcome, exit, stderr)
+    }
+
+    private fun tryCommitDirect(maskBytes: ByteArray, zonesJson: String, reloadEpoch: Long): Result {
+        return try {
+            val dir = File(DATA_DIR)
+            if (!dir.exists() && !dir.mkdirs()) {
+                return Result(Outcome.FAILED, -1, "mkdir $DATA_DIR failed")
+            }
+            File(dir, MASK_NAME).writeBytes(maskBytes)
+            File(dir, ZONES_NAME).writeText(zonesJson, Charsets.UTF_8)
+            // SystemProperties.set via reflection — see BurnoutApp.trySetPropDirect for the same pattern.
+            val cls = Class.forName("android.os.SystemProperties")
+            val m = cls.getMethod("set", String::class.java, String::class.java)
+            m.invoke(null, "sys.burnout.reload", reloadEpoch.toString())
+            Log.i(TAG, "commit direct: wrote /data/burnout/{mask.png,zones.json}, set reload=$reloadEpoch")
+            Result(Outcome.OK, 0, "")
+        } catch (t: Throwable) {
+            // Expected on Gradle debug builds: SecurityException or IOException("Permission denied").
+            Log.d(TAG, "direct commit failed: ${t.javaClass.simpleName}: ${t.message}")
+            Result(Outcome.FAILED, -1, t.message ?: t.javaClass.simpleName)
+        }
     }
 }
