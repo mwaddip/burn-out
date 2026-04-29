@@ -3,6 +3,7 @@ package app.burnout.mark
 import android.content.Context
 import android.content.SharedPreferences
 import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 
@@ -24,6 +25,11 @@ class DraggableOverlay(
             grabOffsetX = e.rawX - dragTarget.x
             grabOffsetY = e.rawY - dragTarget.y
             dragTarget.translationZ = 8f
+            // Visual + haptic confirmation that drag mode is engaged.
+            dragTarget.animate()
+                .scaleX(1.04f).scaleY(1.04f)
+                .setDuration(80L).start()
+            touchTarget.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         }
     })
 
@@ -60,6 +66,9 @@ class DraggableOverlay(
                     if (dragging) {
                         dragging = false
                         dragTarget.translationZ = 0f
+                        dragTarget.animate()
+                            .scaleX(1f).scaleY(1f)
+                            .setDuration(80L).start()
                         prefs.edit()
                             .putString(prefKey(id), encodePosition(dragTarget.x.toInt(), dragTarget.y.toInt()))
                             .apply()
