@@ -3,6 +3,7 @@ package app.burnout.calibrate
 import android.graphics.Bitmap
 import android.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -179,5 +180,38 @@ class ZonesTest {
         zone!!
         assertEquals(0, zone.x0); assertEquals(0, zone.y0)
         assertEquals(15, zone.x1); assertEquals(15, zone.y1)  // 5 + 10 pad, no clamp on upper
+    }
+
+    // ---- canSplitZone ----
+
+    @Test
+    fun canSplitZone_true_when_horizontal_gap_exceeds_threshold() {
+        val bmp = blank(200, 200)
+        // Two horizontal stripes with a 30-row gap (mark-free) between them.
+        for (y in 50..60) for (x in 50..150) bmp.setPixel(x, y, Color.GREEN)
+        for (y in 91..101) for (x in 50..150) bmp.setPixel(x, y, Color.GREEN)
+        // Pretend the parent zone tightly encloses both: bbox 40..160 x 40..111.
+        val parent = Zone(40, 40, 160, 111, 0.1f, floatArrayOf(0f, 1f, 0f))
+        // Gap rows 61..90 = 30 rows of empty → >= threshold 10.
+        assertTrue(Zones.canSplitZone(bmp, parent))
+    }
+
+    @Test
+    fun canSplitZone_true_when_vertical_gap_exceeds_threshold() {
+        val bmp = blank(200, 200)
+        // Two vertical stripes separated by an empty column band.
+        for (y in 50..150) for (x in 50..60) bmp.setPixel(x, y, Color.GREEN)
+        for (y in 50..150) for (x in 91..101) bmp.setPixel(x, y, Color.GREEN)
+        val parent = Zone(40, 40, 111, 160, 0.1f, floatArrayOf(0f, 1f, 0f))
+        assertTrue(Zones.canSplitZone(bmp, parent))
+    }
+
+    @Test
+    fun canSplitZone_false_when_blob_is_solid() {
+        val bmp = blank(200, 200)
+        // Single solid 21x21 blob — no internal gap.
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
+        val parent = Zone(40, 40, 80, 80, 0.1f, floatArrayOf(0f, 1f, 0f))
+        assertFalse(Zones.canSplitZone(bmp, parent))
     }
 }

@@ -117,6 +117,83 @@ object Zones {
         return groups.values.toList()
     }
 
+    // Inclusive index range; or null if no empty run exists.
+    private data class GapRange(val start: Int, val end: Int) { val length: Int get() = end - start + 1 }
+
+    // Longest mark-free run BETWEEN the first and last marked row (so the 10px pad above/below
+    // a tight bbox doesn't register as a gap). Returns null if no internal gap exists.
+    private fun longestEmptyRowsRange(mask: Bitmap, x0: Int, y0: Int, x1: Int, y1: Int): GapRange? {
+        var firstMarked = -1; var lastMarked = -1
+        val empty = BooleanArray(y1 - y0 + 1)
+        for (y in y0..y1) {
+            var anyMark = false
+            for (x in x0..x1) {
+                val p = mask.getPixel(x, y)
+                if (((p shr 16) and 0xFF) != 0 || ((p shr 8) and 0xFF) != 0 || (p and 0xFF) != 0) {
+                    anyMark = true; break
+                }
+            }
+            if (anyMark) {
+                if (firstMarked < 0) firstMarked = y
+                lastMarked = y
+            } else {
+                empty[y - y0] = true
+            }
+        }
+        if (firstMarked < 0 || lastMarked - firstMarked < 2) return null
+        var bestStart = -1; var bestEnd = -1; var bestLen = 0
+        var curStart = -1
+        for (y in (firstMarked + 1) until lastMarked) {
+            if (empty[y - y0]) {
+                if (curStart < 0) curStart = y
+                val len = y - curStart + 1
+                if (len > bestLen) { bestLen = len; bestStart = curStart; bestEnd = y }
+            } else {
+                curStart = -1
+            }
+        }
+        return if (bestLen == 0) null else GapRange(bestStart, bestEnd)
+    }
+
+    private fun longestEmptyColsRange(mask: Bitmap, x0: Int, y0: Int, x1: Int, y1: Int): GapRange? {
+        var firstMarked = -1; var lastMarked = -1
+        val empty = BooleanArray(x1 - x0 + 1)
+        for (x in x0..x1) {
+            var anyMark = false
+            for (y in y0..y1) {
+                val p = mask.getPixel(x, y)
+                if (((p shr 16) and 0xFF) != 0 || ((p shr 8) and 0xFF) != 0 || (p and 0xFF) != 0) {
+                    anyMark = true; break
+                }
+            }
+            if (anyMark) {
+                if (firstMarked < 0) firstMarked = x
+                lastMarked = x
+            } else {
+                empty[x - x0] = true
+            }
+        }
+        if (firstMarked < 0 || lastMarked - firstMarked < 2) return null
+        var bestStart = -1; var bestEnd = -1; var bestLen = 0
+        var curStart = -1
+        for (x in (firstMarked + 1) until lastMarked) {
+            if (empty[x - x0]) {
+                if (curStart < 0) curStart = x
+                val len = x - curStart + 1
+                if (len > bestLen) { bestLen = len; bestStart = curStart; bestEnd = x }
+            } else {
+                curStart = -1
+            }
+        }
+        return if (bestLen == 0) null else GapRange(bestStart, bestEnd)
+    }
+
+    fun canSplitZone(mask: Bitmap, zone: Zone, gapThreshold: Int = 10): Boolean {
+        val hLen = longestEmptyRowsRange(mask, zone.x0, zone.y0, zone.x1, zone.y1)?.length ?: 0
+        val vLen = longestEmptyColsRange(mask, zone.x0, zone.y0, zone.x1, zone.y1)?.length ?: 0
+        return maxOf(hLen, vLen) >= gapThreshold
+    }
+
     fun rectBboxFromMarks(
         mask: Bitmap,
         rx0: Int, ry0: Int, rx1: Int, ry1: Int,
