@@ -42,16 +42,16 @@ class ZonesTest {
     }
 
     @Test
-    fun cap_is_eight() {
-        // Place 10 separated 10x10 blobs (100 px each) far apart in a 5000x100 strip; expect cap 8.
+    fun cap_is_twelve() {
+        // Place 14 separated 10x10 blobs (100 px each) far apart in a 7000x100 strip; expect cap 12.
         // Need spacing > CLUSTER_MERGE_PX (200) so they don't merge.
-        val bmp = blank(5000, 100)
-        for (i in 0 until 10) {
+        val bmp = blank(7000, 100)
+        for (i in 0 until 14) {
             val x0 = i * 400 + 10
             for (y in 40..49) for (x in x0 until x0 + 10) bmp.setPixel(x, y, Color.GREEN)
         }
         val zones = Zones.computeFromMask(bmp)
-        assertEquals(8, zones.size)
+        assertEquals(12, zones.size)
     }
 
     @Test

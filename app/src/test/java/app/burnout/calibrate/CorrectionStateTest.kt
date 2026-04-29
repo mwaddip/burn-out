@@ -23,8 +23,8 @@ class CorrectionStateTest {
     }
 
     @Test
-    fun zone_cap_is_eight() {
-        assertEquals(8, CorrectionState.MAX_ZONES)
+    fun zone_cap_is_twelve() {
+        assertEquals(12, CorrectionState.MAX_ZONES)
     }
 
     @Test

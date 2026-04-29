@@ -98,6 +98,6 @@ class CorrectionState {
     }
 
     companion object {
-        const val MAX_ZONES = 8
+        const val MAX_ZONES = 12
     }
 }

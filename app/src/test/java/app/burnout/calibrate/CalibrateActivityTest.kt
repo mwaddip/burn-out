@@ -40,7 +40,7 @@ class CalibrateActivityTest {
     fun preset_autosave_round_trip_preserves_zones() {
         val orig = CorrectionState()
         orig.maskWidth = 1440; orig.maskHeight = 3168
-        orig.zones = (0 until 8).map { i ->
+        orig.zones = (0 until 12).map { i ->
             Zone(i * 100, i * 200, i * 100 + 50, i * 200 + 50, 0.05f + i * 0.01f)
         }
         orig.falloffRadiusPx = 275f
@@ -50,24 +50,24 @@ class CalibrateActivityTest {
         val restored = CorrectionState()
         restored.fromJson(json)
 
-        assertEquals(8, restored.zones.size)
-        assertEquals(0.05f + 7 * 0.01f, restored.zones[7].dim, 0.001f)
+        assertEquals(12, restored.zones.size)
+        assertEquals(0.05f + 11 * 0.01f, restored.zones[11].dim, 0.001f)
         assertEquals(275f, restored.falloffRadiusPx, 0.01f)
     }
 
     @Test
-    fun ninth_zone_in_json_is_dropped() {
+    fun thirteenth_zone_in_json_is_dropped() {
         val obj = JSONObject()
         obj.put("mask_w", 100).put("mask_h", 100)
             .put("falloff_radius_px", 0).put("global_dim", 0.0)
         val zarr = org.json.JSONArray()
-        for (i in 0 until 9) {
+        for (i in 0 until 13) {
             zarr.put(JSONObject()
                 .put("x0", i).put("y0", i).put("x1", i + 1).put("y1", i + 1).put("dim", 0.1))
         }
         obj.put("zones", zarr)
         val state = CorrectionState()
         state.fromJson(obj.toString())
-        assertEquals(8, state.zones.size)
+        assertEquals(12, state.zones.size)
     }
 }

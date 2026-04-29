@@ -11,9 +11,9 @@ uniform int u_simulatePanel;
 uniform float u_wearStrength;
 
 uniform int u_zoneCount;
-uniform vec4 u_zones[8];           // x0,y0,x1,y1 in UV [0,1] per zone
-uniform float u_zoneDims[8];
-uniform vec3 u_zoneChannels[8];    // RGB has-wear flag per zone (0 or 1)
+uniform vec4 u_zones[12];          // x0,y0,x1,y1 in UV [0,1] per zone (cap matches CorrectionState.MAX_ZONES)
+uniform float u_zoneDims[12];
+uniform vec3 u_zoneChannels[12];   // RGB has-wear flag per zone (0 or 1)
 uniform int u_selectedZone;
 uniform vec2 u_pxToUV;             // (1/maskW, 1/maskH) — also used for outline thickness
 uniform vec2 u_maskSizePx;         // (maskW, maskH)
@@ -58,7 +58,7 @@ void main() {
             float zw = 0.0;
             float zd = 0.0;
             vec3 zoneCh = vec3(0.0);   // dominant zone's channel mask
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < 12; ++i) {
                 if (i >= u_zoneCount) break;
                 float w = zoneWeight(v_uv, u_zones[i], u_falloffRadiusPx);
                 if (w > zw) { zw = w; zd = u_zoneDims[i]; zoneCh = u_zoneChannels[i]; }
