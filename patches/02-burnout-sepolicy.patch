@@ -14,34 +14,58 @@ index 59745708d..83cd6419a 100644
  /data/misc_ce/0/sdksandbox                                        sdk_sandbox_system_data_file
 diff --git a/private/burnout_app.te b/private/burnout_app.te
 new file mode 100644
-index 000000000..1e60261de
+index 000000000..e8d328aa4
 --- /dev/null
 +++ b/private/burnout_app.te
-@@ -0,0 +1,13 @@
-+# Burn-out compensation system app — domain stub (Phase 2).
+@@ -0,0 +1,31 @@
++# Burn-out compensation system app — operative domain (Phase 6).
 +#
-+# This domain type is declared now so the future Burn-out app (Phase 3+)
-+# can be associated with it via seapp_contexts without further sepolicy
-+# patches needing to land. The seapp_contexts entry that maps the actual
-+# `app.burnout` package to this domain is added in Phase 3 along with
-+# the rules the app needs (set_prop, /data/burnout file access, etc.).
++# This domain runs the platform-signed Burn-out system app (package app.burnout)
++# bundled at /system/app/Burnout/ on burn-out-enabled LineageOS ROMs. The app
++# uses sharedUserId="android.uid.system" and the platform certificate, so
++# seapp_contexts routes user=system + seinfo=platform + name=app.burnout into
++# this domain.
 +#
-+# In Phase 2, this declaration is dormant: no app runs in this domain,
-+# no rules are attached. SELinux compiles the type into the policy
-+# binary but it has no runtime effect.
++# Capabilities granted:
++#   - set_prop on burnout_prop (persist.sys.burnout.*, sys.burnout.*) so the app
++#     can toggle correction, signal reload, and set the suspend prop without a
++#     Runtime.exec("su", ...) shell-out.
++#   - read+write on /data/burnout/{mask.png,zones.json} (burnout_data_file) so
++#     Calibrate Save commits live without root.
++#   - read+write on the app's own private data dir (burnout_app_data_file).
 +
 +type burnout_app, domain, coredomain;
++
++app_domain(burnout_app);
++
++# Set burn-out sysprops: persist.sys.burnout.enabled, sys.burnout.reload, sys.burnout.suspend.
++set_prop(burnout_app, burnout_prop)
++
++# Read+write /data/burnout/{mask.png,zones.json} for Calibrate Save.
++allow burnout_app burnout_data_file:dir { create_dir_perms relabelfrom };
++allow burnout_app burnout_data_file:file { create_file_perms relabelto };
++
++# App's private data dir (under /data/data/app.burnout/, but typed for completeness;
++# Android's package installer creates this with the seapp_contexts type).
++allow burnout_app burnout_app_data_file:dir create_dir_perms;
++allow burnout_app burnout_app_data_file:file create_file_perms;
 diff --git a/private/file.te b/private/file.te
-index b832da44c..361f05cd1 100644
+index b832da44c..c6f9df261 100644
 --- a/private/file.te
 +++ b/private/file.te
-@@ -283,3 +283,6 @@ until_board_api(202604, `type sysfs_typec, fs_type, sysfs_type;')
+@@ -283,3 +283,12 @@ until_board_api(202604, `type sysfs_typec, fs_type, sysfs_type;')
  until_board_api(202604, `type sysfs_usb_pd, fs_type, sysfs_type;')
  
  type zygote_next_socket, file_type, coredomain_socket;
 +
 +# /data/burnout — burn-out compensation mask + zones config
 +type burnout_data_file, file_type, data_file_type, core_data_file_type;
++
++# /data/data/app.burnout — Burn-out system app's private data (Phase 6). Same
++# attribute set as system_app_data_file (in public/) because the app shares
++# the system UID via sharedUserId="android.uid.system". Kept private to avoid
++# touching the frozen 202504 public API surface.
++type burnout_app_data_file, file_type, data_file_type, core_data_file_type, app_data_file_type, mlstrustedobject;
 diff --git a/private/file_contexts b/private/file_contexts
 index bc79eebf7..425dc91df 100644
 --- a/private/file_contexts
@@ -92,6 +116,20 @@ index b325c2ff0..280c5e597 100644
 +# Burn-out compensation (Phase 2)
 +persist.sys.burnout.        u:object_r:burnout_prop:s0
 +sys.burnout.                u:object_r:burnout_prop:s0
+diff --git a/private/seapp_contexts b/private/seapp_contexts
+index a6e829dd2..6a42053db 100644
+--- a/private/seapp_contexts
++++ b/private/seapp_contexts
+@@ -214,3 +214,9 @@ user=_app fromRunAs=true domain=runas_app levelFrom=user
+ user=_app isPrivApp=true name=com.android.virtualization.terminal domain=vmlauncher_app type=privapp_data_file levelFrom=all
+ user=_app isPrivApp=true name=com.android.virtualization.terminal:* domain=vmlauncher_app type=privapp_data_file levelFrom=all
+ user=_app isPrivApp=true name=com.google.android.adservices.api domain=adservices type=privapp_data_file levelFrom=all
++
++# Burn-out compensation system app (Phase 6): platform-signed app.burnout running
++# as system UID gets routed to the burnout_app domain with private burnout_app_data_file
++# data type. Without this entry, the app would fall into system_app (since user=system
++# + seinfo=platform matches that earlier rule), which lacks the burnout-specific allows.
++user=system seinfo=platform name=app.burnout domain=burnout_app type=burnout_app_data_file
 diff --git a/private/surfaceflinger.te b/private/surfaceflinger.te
 index f4f64ce4a..e1ee52e1e 100644
 --- a/private/surfaceflinger.te
