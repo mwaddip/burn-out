@@ -13,6 +13,7 @@ uniform float u_wearStrength;
 uniform int u_zoneCount;
 uniform vec4 u_zones[8];           // x0,y0,x1,y1 in UV [0,1] per zone
 uniform float u_zoneDims[8];
+uniform vec3 u_zoneChannels[8];    // RGB has-wear flag per zone (0 or 1)
 uniform int u_selectedZone;
 uniform vec2 u_pxToUV;             // (1/maskW, 1/maskH) — also used for outline thickness
 uniform vec2 u_maskSizePx;         // (maskW, maskH)
@@ -56,16 +57,22 @@ void main() {
         if (!marked) {
             float zw = 0.0;
             float zd = 0.0;
+            vec3 zoneCh = vec3(0.0);   // dominant zone's channel mask
             // Loop up to u_zoneCount; static array bound 8 keeps the shader compilable on all drivers.
             for (int i = 0; i < 8; ++i) {
                 if (i >= u_zoneCount) break;
                 float w = zoneWeight(v_uv, u_zones[i], u_falloffRadiusPx);
-                if (w > zw) { zw = w; zd = u_zoneDims[i]; }
-                else if (w == zw && u_zoneDims[i] > zd) { zd = u_zoneDims[i]; }
+                if (w > zw) { zw = w; zd = u_zoneDims[i]; zoneCh = u_zoneChannels[i]; }
+                else if (w == zw && u_zoneDims[i] > zd) { zd = u_zoneDims[i]; zoneCh = u_zoneChannels[i]; }
             }
             float dim = mix(u_globalDim, zd, zw);
-            vec3 channelHasWear = step(vec3(0.001), vec3(u_maxWearR, u_maxWearG, u_maxWearB));
-            vec3 dimV = clamp(channelHasWear * vec3(dim), vec3(0.0), vec3(0.99));
+            // Channel mask transitions smoothly with the same weight that drives dim:
+            //   weight=1 inside bbox  → use zone's channel mask exactly
+            //   weight=0 far from any → fall back to global "channels with any wear"
+            //   in between (falloff)  → linear blend between the two, avoiding ring artifacts
+            vec3 globalCh = step(vec3(0.001), vec3(u_maxWearR, u_maxWearG, u_maxWearB));
+            vec3 channelMask = mix(globalCh, zoneCh, zw);
+            vec3 dimV = clamp(channelMask * vec3(dim), vec3(0.0), vec3(0.99));
             outLin = lin * (vec3(1.0) - dimV);
         }
     }

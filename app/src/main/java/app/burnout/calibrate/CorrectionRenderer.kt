@@ -23,6 +23,7 @@ class CorrectionRenderer(
 
     private val zonesUv = FloatArray(CorrectionState.MAX_ZONES * 4)
     private val zonesDim = FloatArray(CorrectionState.MAX_ZONES)
+    private val zonesChannels = FloatArray(CorrectionState.MAX_ZONES * 3)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -34,7 +35,7 @@ class CorrectionRenderer(
         for (n in listOf("u_mask", "u_bgColor", "u_correctionOn",
                          "u_maxWearR", "u_maxWearG", "u_maxWearB",
                          "u_simulatePanel", "u_wearStrength",
-                         "u_zoneCount", "u_zones", "u_zoneDims",
+                         "u_zoneCount", "u_zones", "u_zoneDims", "u_zoneChannels",
                          "u_selectedZone", "u_pxToUV",
                          "u_maskSizePx", "u_falloffRadiusPx", "u_globalDim")) {
             uniforms[n] = GLES30.glGetUniformLocation(program, n)
@@ -97,10 +98,15 @@ class CorrectionRenderer(
             zonesUv[i * 4 + 2] = (z?.x1 ?: 0).toFloat() / w
             zonesUv[i * 4 + 3] = (z?.y1 ?: 0).toFloat() / h
             zonesDim[i] = z?.dim ?: 0f
+            val ch = z?.channels
+            zonesChannels[i * 3 + 0] = ch?.getOrElse(0) { 0f } ?: 0f
+            zonesChannels[i * 3 + 1] = ch?.getOrElse(1) { 0f } ?: 0f
+            zonesChannels[i * 3 + 2] = ch?.getOrElse(2) { 0f } ?: 0f
         }
         GLES30.glUniform1i(uniforms["u_zoneCount"]!!, zones.size)
         GLES30.glUniform4fv(uniforms["u_zones"]!!, CorrectionState.MAX_ZONES, zonesUv, 0)
         GLES30.glUniform1fv(uniforms["u_zoneDims"]!!, CorrectionState.MAX_ZONES, zonesDim, 0)
+        GLES30.glUniform3fv(uniforms["u_zoneChannels"]!!, CorrectionState.MAX_ZONES, zonesChannels, 0)
         GLES30.glUniform1i(uniforms["u_selectedZone"]!!,
             state.selectedZone.coerceIn(0, (zones.size - 1).coerceAtLeast(0)))
         GLES30.glUniform2f(uniforms["u_pxToUV"]!!, 1f / w, 1f / h)
