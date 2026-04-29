@@ -1,9 +1,9 @@
 diff --git a/burnout/burnout.mk b/burnout/burnout.mk
 new file mode 100644
-index 00000000..3454083c
+index 00000000..b7736870
 --- /dev/null
 +++ b/burnout/burnout.mk
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,32 @@
 +# Burn-out compensation — factory bake-in target (multi-device template).
 +#
 +# Include this from your device's makefile after setting BURNOUT_FB_WIDTH and
@@ -33,3 +33,6 @@ index 00000000..3454083c
 +PRODUCT_COPY_FILES += \
 +    $(BURNOUT_LOCAL_PATH)/factory/mask.png:system/etc/burnout/mask.png \
 +    $(BURNOUT_LOCAL_PATH)/factory/zones.json:system/etc/burnout/zones.json
++
++# Bundle the Burn-out system app (platform-signed, /system/app/Burnout/).
++PRODUCT_PACKAGES += Burnout
