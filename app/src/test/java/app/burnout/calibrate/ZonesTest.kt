@@ -146,4 +146,38 @@ class ZonesTest {
         // Initial dim = globalDim[G] since only G is present.
         assertEquals(0.20f, zone.dim, 0.001f)
     }
+
+    @Test
+    fun rectBboxFromMarks_multichannel_zone_has_combined_channel_mask() {
+        val bmp = blank(200, 200)
+        // R blob at (50..60), G blob at (62..72), both within the user's rectangle.
+        for (y in 50..60) for (x in 50..60) bmp.setPixel(x, y, Color.RED)
+        for (y in 62..72) for (x in 62..72) bmp.setPixel(x, y, Color.GREEN)
+        val gd = floatArrayOf(0.10f, 0.30f, 0.50f)
+        val zone = Zones.rectBboxFromMarks(bmp, 40, 40, 90, 90, gd)
+        assertNotNull(zone)
+        zone!!
+        // Encloses both blobs: 50..72 + 10px pad → 40..82.
+        assertEquals(40, zone.x0); assertEquals(40, zone.y0)
+        assertEquals(82, zone.x1); assertEquals(82, zone.y1)
+        // Both R and G flagged; B is not.
+        assertEquals(1f, zone.channels[0], 0.001f)
+        assertEquals(1f, zone.channels[1], 0.001f)
+        assertEquals(0f, zone.channels[2], 0.001f)
+        // Initial dim = mean(globalDim[R], globalDim[G]) = (0.10 + 0.30) / 2 = 0.20.
+        assertEquals(0.20f, zone.dim, 0.001f)
+    }
+
+    @Test
+    fun rectBboxFromMarks_clamps_pad_at_mask_boundary() {
+        val bmp = blank(100, 100)
+        // Blob in the corner so 10px pad would go negative.
+        for (y in 0..5) for (x in 0..5) bmp.setPixel(x, y, Color.GREEN)
+        val gd = floatArrayOf(0.08f, 0.08f, 0.08f)
+        val zone = Zones.rectBboxFromMarks(bmp, 0, 0, 50, 50, gd)
+        assertNotNull(zone)
+        zone!!
+        assertEquals(0, zone.x0); assertEquals(0, zone.y0)
+        assertEquals(15, zone.x1); assertEquals(15, zone.y1)  // 5 + 10 pad, no clamp on upper
+    }
 }
