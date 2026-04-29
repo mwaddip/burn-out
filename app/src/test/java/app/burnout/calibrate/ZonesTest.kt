@@ -3,6 +3,7 @@ package app.burnout.calibrate
 import android.graphics.Bitmap
 import android.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -110,5 +111,17 @@ class ZonesTest {
         val zones = Zones.computeFromMask(bmp)
         assertEquals(2, zones.size)
         assertTrue("first zone is the upper one", zones[0].y0 < zones[1].y0)
+    }
+
+    // ---- rectBboxFromMarks ----
+
+    @Test
+    fun rectBboxFromMarks_returns_null_when_rect_is_empty_of_marks() {
+        val bmp = blank(200, 200)
+        // Paint a green blob OUTSIDE the rectangle below.
+        for (y in 5..15) for (x in 5..15) bmp.setPixel(x, y, Color.GREEN)
+        val gd = floatArrayOf(0.08f, 0.08f, 0.08f)
+        val zone = Zones.rectBboxFromMarks(bmp, 100, 100, 150, 150, gd)
+        assertNull("rectangle with no marks must return null", zone)
     }
 }
