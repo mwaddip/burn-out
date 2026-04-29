@@ -2,10 +2,12 @@ package app.burnout.mark
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Insets
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 
 class DraggableOverlay(
     private val dragTarget: View,
@@ -82,10 +84,18 @@ class DraggableOverlay(
     }
 
     private fun clampToScreen(x: Float, y: Float): Pair<Float, Float> {
-        val parent = dragTarget.parent as? android.view.View ?: return x to y
-        val maxX = (parent.width  - dragTarget.width ).coerceAtLeast(0).toFloat()
-        val maxY = (parent.height - dragTarget.height).coerceAtLeast(0).toFloat()
-        return x.coerceIn(0f, maxX) to y.coerceIn(0f, maxY)
+        val parent = dragTarget.parent as? View ?: return x to y
+        // Use system-gesture insets so the panel doesn't render in the gesture-nav region at the
+        // bottom or in the back-swipe regions at the curved screen edges. Without this, the panel's
+        // x/y can be set to coordinates where its content is clipped or obscured by system gestures
+        // (especially noticeable on OP12 with curved-edge gesture-back at the sides).
+        val gesture = parent.rootWindowInsets?.getInsets(WindowInsets.Type.systemGestures())
+            ?: Insets.of(0, 0, 0, 0)
+        val minX = gesture.left.toFloat()
+        val minY = gesture.top.toFloat()
+        val maxX = (parent.width  - gesture.right  - dragTarget.width ).toFloat().coerceAtLeast(minX)
+        val maxY = (parent.height - gesture.bottom - dragTarget.height).toFloat().coerceAtLeast(minY)
+        return x.coerceIn(minX, maxX) to y.coerceIn(minY, maxY)
     }
 
     companion object {
