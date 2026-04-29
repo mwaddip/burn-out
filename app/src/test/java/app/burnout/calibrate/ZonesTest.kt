@@ -241,4 +241,34 @@ class ZonesTest {
         top.channels[0] = 99f
         assertEquals(0f, bottom.channels[0], 0.001f)
     }
+
+    @Test
+    fun splitZone_vertical_gap_splits_left_right() {
+        val bmp = blank(200, 200)
+        // Left blob 50..60, right blob 91..101, columns 61..90 empty.
+        for (y in 50..150) for (x in 50..60) bmp.setPixel(x, y, Color.GREEN)
+        for (y in 50..150) for (x in 91..101) bmp.setPixel(x, y, Color.GREEN)
+        val parent = Zone(40, 40, 111, 160, 0.33f, floatArrayOf(1f, 0f, 0f))
+        val split = Zones.splitZone(bmp, parent)
+        assertNotNull(split)
+        val (left, right) = split!!
+        // Left half marks 50..60 → 40..70 with pad.
+        assertEquals(40, left.x0); assertEquals(70, left.x1)
+        // Right half marks 91..101 → 81..111 with pad.
+        assertEquals(81, right.x0); assertEquals(111, right.x1)
+        // Y bounds: marks 50..150 + pad → 40..160.
+        assertEquals(40, left.y0); assertEquals(160, left.y1)
+        assertEquals(40, right.y0); assertEquals(160, right.y1)
+        // Inherited dim and channels.
+        assertEquals(0.33f, left.dim, 0.001f); assertEquals(0.33f, right.dim, 0.001f)
+        assertEquals(1f, left.channels[0], 0.001f); assertEquals(1f, right.channels[0], 0.001f)
+    }
+
+    @Test
+    fun splitZone_returns_null_when_no_clear_gap() {
+        val bmp = blank(200, 200)
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
+        val parent = Zone(40, 40, 80, 80, 0.1f, floatArrayOf(0f, 1f, 0f))
+        assertNull(Zones.splitZone(bmp, parent))
+    }
 }
