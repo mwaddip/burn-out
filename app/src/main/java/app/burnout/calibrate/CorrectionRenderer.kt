@@ -112,7 +112,7 @@ class CorrectionRenderer(
         GLES30.glUniform2f(uniforms["u_pxToUV"]!!, 1f / w, 1f / h)
         GLES30.glUniform2f(uniforms["u_maskSizePx"]!!, w.toFloat(), h.toFloat())
         GLES30.glUniform1f(uniforms["u_falloffRadiusPx"]!!, state.falloffRadiusPx)
-        GLES30.glUniform1f(uniforms["u_globalDim"]!!, state.globalDim)
+        GLES30.glUniform3f(uniforms["u_globalDim"]!!, state.globalDim[0], state.globalDim[1], state.globalDim[2])
 
         GLES30.glEnableVertexAttribArray(aPos)
         GLES30.glVertexAttribPointer(aPos, 2, GLES30.GL_FLOAT, false, 0, quadBuf)

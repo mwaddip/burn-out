@@ -18,7 +18,7 @@ uniform int u_selectedZone;
 uniform vec2 u_pxToUV;             // (1/maskW, 1/maskH) — also used for outline thickness
 uniform vec2 u_maskSizePx;         // (maskW, maskH)
 uniform float u_falloffRadiusPx;   // outward linear-ramp radius around each bbox
-uniform float u_globalDim;         // baseline dim everywhere on wearing channels
+uniform vec3 u_globalDim;          // per-channel baseline dim (R, G, B). Each channel independent.
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -65,14 +65,16 @@ void main() {
                 else if (w == zw && u_zoneDims[i] > zd) { zd = u_zoneDims[i]; zoneCh = u_zoneChannels[i]; }
             }
             // Per-channel dim assembled as two independent terms:
-            //   - zone term: only the dominant zone's painted channels, dim = mix(globalDim, zoneDim, weight)
-            //   - baseline term: channels that have global wear but aren't in the zone, dim = globalDim
-            // No bleed of the zone's dim into other channels in the falloff. zw=0 collapses both terms
-            // to the same per-channel globalDim, so the boundary is continuous.
+            //   - zone term: only the dominant zone's painted channels, each channel mixed
+            //     between its u_globalDim baseline and the zone's zd as zw goes 0→1.
+            //   - baseline term: channels that have global wear but aren't in the zone get only
+            //     their per-channel u_globalDim baseline.
+            // At zw=0 both terms collapse to globalCh * u_globalDim (per channel), so the boundary
+            // is continuous regardless of which zone is dominant.
             vec3 globalCh = step(vec3(0.001), vec3(u_maxWearR, u_maxWearG, u_maxWearB));
             vec3 nonZoneGlobalCh = clamp(globalCh - zoneCh, vec3(0.0), vec3(1.0));
-            float zoneDim = mix(u_globalDim, zd, zw);
-            vec3 dimV = clamp(zoneCh * vec3(zoneDim) + nonZoneGlobalCh * vec3(u_globalDim),
+            vec3 zoneDimV = mix(u_globalDim, vec3(zd), zw);   // per-channel (each channel ramps independently)
+            vec3 dimV = clamp(zoneCh * zoneDimV + nonZoneGlobalCh * u_globalDim,
                               vec3(0.0), vec3(0.99));
             outLin = lin * (vec3(1.0) - dimV);
         }

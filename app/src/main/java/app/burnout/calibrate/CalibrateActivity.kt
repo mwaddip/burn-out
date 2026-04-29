@@ -100,7 +100,7 @@ class CalibrateActivity : AppCompatActivity() {
     }
 
     private fun autoDetectAndPersist(bmp: Bitmap) {
-        val zones = Zones.computeFromMask(bmp, prev = emptyList(), seedDim = state.globalDim)
+        val zones = Zones.computeFromMask(bmp, prev = emptyList(), seedDims = state.globalDim)
         state.zones = zones
         state.selectedZone = 0
         try {
@@ -195,13 +195,15 @@ class CalibrateActivity : AppCompatActivity() {
                 state.maskBitmap?.let { it.copy(it.config ?: Bitmap.Config.ARGB_8888, false) }
             }
             override fun snapshotMeta() = synchronized(maskLock) {
+                // TCP protocol still exposes a single global_dim — broadcast the max of the per-channel
+                // values so the desktop editor sees the most informative number until protocol catches up.
                 MaskServer.MetaSnapshot(
                     state.maskWidth, state.maskHeight,
                     state.zones.toList(),
                     state.selectedZone,
                     state.maxWearR, state.maxWearG, state.maxWearB,
                     state.falloffRadiusPx,
-                    state.globalDim,
+                    maxOf(state.globalDim[0], state.globalDim[1], state.globalDim[2]),
                 )
             }
             override fun applyPixelEdits(edits: List<MaskServer.PixelEdit>) {
@@ -241,8 +243,13 @@ class CalibrateActivity : AppCompatActivity() {
                 runOnUiThread { updateStatus() }
             }
             override fun setGlobalDim(value: Float) {
-                state.globalDim = value.coerceIn(0f, 1f)
-                runOnUiThread { updateStatus() }
+                // Legacy TCP protocol takes a scalar — broadcast to all RGB channels.
+                val v = value.coerceIn(0f, 1f)
+                state.globalDim = floatArrayOf(v, v, v)
+                runOnUiThread {
+                    syncGlobalDimSliders()
+                    updateStatus()
+                }
             }
             override fun saveAll(): String? {
                 var err: String? = null
@@ -295,18 +302,11 @@ class CalibrateActivity : AppCompatActivity() {
             })
         }
 
+        // Per-channel globalDim: three independent sliders (R / G / B).
+        wireGlobalDimSlider(0, R.id.seek_global_dim_r)
+        wireGlobalDimSlider(1, R.id.seek_global_dim_g)
+        wireGlobalDimSlider(2, R.id.seek_global_dim_b)
         lblGlobalDim = findViewById(R.id.lbl_global_dim)
-        findViewById<SeekBar>(R.id.seek_global_dim).apply {
-            this.max = 200
-            progress = (state.globalDim * 200f).toInt().coerceIn(0, 200)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, v: Int, fromUser: Boolean) {
-                    if (fromUser) { state.globalDim = v * 0.005f; updateStatus() }
-                }
-                override fun onStartTrackingTouch(s: SeekBar?) {}
-                override fun onStopTrackingTouch(s: SeekBar?) {}
-            })
-        }
 
         val btnBg = findViewById<Button>(R.id.btn_bg)
         btnBg.text = "BG: ${bgLabels[bgIndex]}"
@@ -343,11 +343,35 @@ class CalibrateActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_export).setOnClickListener { exportToDownloads() }
     }
 
+    private fun wireGlobalDimSlider(channelIdx: Int, seekId: Int) {
+        findViewById<SeekBar>(seekId).apply {
+            this.max = 200
+            progress = (state.globalDim[channelIdx] * 200f).toInt().coerceIn(0, 200)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, v: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        state.globalDim[channelIdx] = v * 0.005f
+                        updateStatus()
+                    }
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        }
+    }
+
+    private fun syncGlobalDimSliders() {
+        listOf(0 to R.id.seek_global_dim_r, 1 to R.id.seek_global_dim_g, 2 to R.id.seek_global_dim_b).forEach { (idx, id) ->
+            findViewById<SeekBar>(id)?.progress = (state.globalDim[idx] * 200f).toInt().coerceIn(0, 200)
+        }
+    }
+
     private fun updateStatus() {
         val on = if (state.correctionOn) "ON" else "OFF"
         val zoneInfo = if (state.zones.isEmpty()) "no zones" else
             "zone ${state.selectedZone + 1}/${state.zones.size} dim=${"%.3f".format(Locale.US, selectedZoneDim())}"
-        statusLine.text = "$on • bg=${bgLabels[bgIndex]} • $zoneInfo • g=${"%.3f".format(Locale.US, state.globalDim)}"
+        val gd = "%.3f/%.3f/%.3f".format(Locale.US, state.globalDim[0], state.globalDim[1], state.globalDim[2])
+        statusLine.text = "$on • bg=${bgLabels[bgIndex]} • $zoneInfo • g=$gd"
         if (::btnZone.isInitialized) {
             btnZone.text = if (state.zones.isEmpty()) "ZONE: —" else "ZONE: ${state.selectedZone + 1}/${state.zones.size}"
         }
@@ -355,7 +379,7 @@ class CalibrateActivity : AppCompatActivity() {
             lblRadius.text = "falloff radius: ${state.falloffRadiusPx.toInt()}px"
         }
         if (::lblGlobalDim.isInitialized) {
-            lblGlobalDim.text = "global dim: ${"%.3f".format(Locale.US, state.globalDim)}"
+            lblGlobalDim.text = "global dim R/G/B: $gd"
         }
     }
 
