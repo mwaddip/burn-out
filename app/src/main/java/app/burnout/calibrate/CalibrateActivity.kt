@@ -15,6 +15,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import app.burnout.R
+import app.burnout.mark.DraggableOverlay
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -55,9 +56,20 @@ class CalibrateActivity : AppCompatActivity() {
 
         statusLine = findViewById(R.id.status_line)
         wireControls()
+        wireDraggables()
         loadMaskAndState()
         startServer()
         updateStatus()
+    }
+
+    private fun wireDraggables() {
+        val prefs = DraggableOverlay.prefsFor(this)
+        DraggableOverlay(
+            dragTarget = findViewById(R.id.controls_panel),
+            touchTarget = findViewById(R.id.controls_drag_handle),
+            id = "calibrate_controls",
+            prefs = prefs,
+        )
     }
 
     override fun onResume() { super.onResume(); glView.onResume() }
