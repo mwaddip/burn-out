@@ -10,3 +10,11 @@ local.properties
 .DS_Store
 *.swp
 *~
+
+# PyInstaller artifacts (Phase 8)
+dist/
+*.spec
+burnout-editor-*.tar.gz
+burnout-editor-*.dmg
+burnout-editor-*.exe
+burnout-editor-*.zip
