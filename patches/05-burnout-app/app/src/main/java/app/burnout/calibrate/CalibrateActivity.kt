@@ -102,7 +102,11 @@ class CalibrateActivity : AppCompatActivity() {
             finish(); return
         }
         thread(start = true, name = "calibrate-load") {
-            val bmp = BitmapFactory.decodeFile(maskFile.absolutePath) ?: return@thread
+            // inMutable=true so MaskServer.applyPixelEdits can call bmp.setPixel for
+            // desktop-editor TCP edits. Default decode produces an immutable bitmap
+            // and any setPixel against it throws IllegalStateException.
+            val opts = BitmapFactory.Options().apply { inMutable = true }
+            val bmp = BitmapFactory.decodeFile(maskFile.absolutePath, opts) ?: return@thread
             val perChan = MaskBlur.globalMaxWearPerChannel(bmp)
             state.maxWearR = perChan[0]; state.maxWearG = perChan[1]; state.maxWearB = perChan[2]
             state.maskWidth = bmp.width; state.maskHeight = bmp.height
