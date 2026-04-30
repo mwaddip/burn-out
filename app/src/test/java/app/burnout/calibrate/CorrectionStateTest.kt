@@ -1,6 +1,7 @@
 package app.burnout.calibrate
 
 import org.json.JSONObject
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -123,5 +124,70 @@ class CorrectionStateTest {
         assertEquals(0.05f, s.globalDim[0], 0.001f)
         assertEquals(0.05f, s.globalDim[1], 0.001f)
         assertEquals(0.05f, s.globalDim[2], 0.001f)
+    }
+
+    // ---- Severity-aware tuning (Phase 9A.1) ----
+
+    @Test
+    fun severity_defaults_match_spec() {
+        val s = CorrectionState()
+        assertArrayEquals(intArrayOf(25, 25, 25, 25), s.severityGaps)
+        assertArrayEquals(booleanArrayOf(false, false, false, false), s.severityLocks)
+    }
+
+    @Test
+    fun sevWearFraction_default_is_linear() {
+        val s = CorrectionState()
+        val f = s.sevWearFraction()
+        assertEquals(5, f.size)
+        assertEquals(0.0f,  f[0], 0.0001f)
+        assertEquals(0.25f, f[1], 0.0001f)
+        assertEquals(0.50f, f[2], 0.0001f)
+        assertEquals(0.75f, f[3], 0.0001f)
+        assertEquals(1.0f,  f[4], 0.0001f)
+    }
+
+    @Test
+    fun sevWearFraction_skewed_distribution() {
+        val s = CorrectionState()
+        s.severityGaps = intArrayOf(10, 10, 20, 60)
+        val f = s.sevWearFraction()
+        assertEquals(0.00f, f[0], 0.0001f)
+        assertEquals(0.10f, f[1], 0.0001f)
+        assertEquals(0.20f, f[2], 0.0001f)
+        assertEquals(0.40f, f[3], 0.0001f)
+        assertEquals(1.00f, f[4], 0.0001f)
+    }
+
+    @Test
+    fun severity_fields_roundtrip_through_json() {
+        val s = CorrectionState()
+        s.maskWidth = 100; s.maskHeight = 100
+        s.severityGaps = intArrayOf(10, 20, 30, 40)
+        s.severityLocks = booleanArrayOf(false, true, false, true)
+        val restored = CorrectionState()
+        restored.fromJson(s.toJson())
+        assertArrayEquals(intArrayOf(10, 20, 30, 40), restored.severityGaps)
+        assertArrayEquals(booleanArrayOf(false, true, false, true), restored.severityLocks)
+    }
+
+    @Test
+    fun severity_fields_default_when_missing_in_legacy_json() {
+        val legacy = """{"mask_w":100,"mask_h":100,"falloff_radius_px":300,
+            "global_dim":[0.08,0.08,0.08],"zones":[]}""".trimIndent()
+        val s = CorrectionState()
+        s.fromJson(legacy)
+        assertArrayEquals(intArrayOf(25, 25, 25, 25), s.severityGaps)
+        assertArrayEquals(booleanArrayOf(false, false, false, false), s.severityLocks)
+    }
+
+    @Test
+    fun severity_fields_default_on_invalid_json() {
+        val invalid = """{"mask_w":100,"mask_h":100,"zones":[],
+            "severity_gaps":[40,40,40,40]}""".trimIndent()  // sums to 160 — invalid
+        val s = CorrectionState()
+        s.fromJson(invalid)
+        assertArrayEquals("invalid sum falls back to defaults",
+            intArrayOf(25, 25, 25, 25), s.severityGaps)
     }
 }

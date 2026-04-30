@@ -44,6 +44,19 @@ class CorrectionState {
     @Volatile var falloffRadiusPx: Float = 300f
     @Volatile var globalDim: FloatArray = floatArrayOf(0.08f, 0.08f, 0.08f)
 
+    // Severity-aware shading tuning (spec §5). 4 inter-bucket gaps in [0, 100], sum = 100.
+    @Volatile var severityGaps: IntArray = intArrayOf(25, 25, 25, 25)
+    @Volatile var severityLocks: BooleanArray = booleanArrayOf(false, false, false, false)
+
+    // Cumulative wear-fraction lookup [0, c1, c1+c2, c1+c2+c3, 1.0] derived from severityGaps.
+    fun sevWearFraction(): FloatArray {
+        val out = FloatArray(5)
+        out[0] = 0f
+        for (i in 0..3) out[i + 1] = out[i] + severityGaps[i] / 100f
+        out[4] = 1f  // pin against accumulated rounding error
+        return out
+    }
+
     fun toJson(): String {
         val zonesArr = JSONArray()
         zones.forEach { z ->
@@ -67,6 +80,12 @@ class CorrectionState {
                 .put("r", "%.4f".format(Locale.US, maxWearR).toDouble())
                 .put("g", "%.4f".format(Locale.US, maxWearG).toDouble())
                 .put("b", "%.4f".format(Locale.US, maxWearB).toDouble()))
+            .put("severity_gaps", JSONArray()
+                .put(severityGaps[0]).put(severityGaps[1])
+                .put(severityGaps[2]).put(severityGaps[3]))
+            .put("severity_locks", JSONArray()
+                .put(severityLocks[0]).put(severityLocks[1])
+                .put(severityLocks[2]).put(severityLocks[3]))
         return obj.toString(2)
     }
 
@@ -109,6 +128,24 @@ class CorrectionState {
             maxWearG = mw.optDouble("g", 0.0).toFloat()
             maxWearB = mw.optDouble("b", 0.0).toFloat()
         }
+        // Severity tuning: defaults 25/25/25/25 + all unlocked when missing or invalid.
+        val sgArr = obj.optJSONArray("severity_gaps")
+        severityGaps = if (sgArr != null && sgArr.length() == 4) {
+            val parsed = IntArray(4) { sgArr.getInt(it) }
+            val sum = parsed.sum()
+            val inRange = parsed.all { it in 0..100 }
+            if (sum == 100 && inRange) parsed else intArrayOf(25, 25, 25, 25)
+        } else intArrayOf(25, 25, 25, 25)
+
+        val slArr = obj.optJSONArray("severity_locks")
+        severityLocks = if (slArr != null && slArr.length() == 4) {
+            BooleanArray(4) { slArr.getBoolean(it) }.also {
+                // Enforce ≥2 unlocked invariant on read; if violated, fall back to all unlocked.
+                if (it.count { locked -> !locked } < 2) {
+                    for (i in 0..3) it[i] = false
+                }
+            }
+        } else booleanArrayOf(false, false, false, false)
     }
 
     companion object {
