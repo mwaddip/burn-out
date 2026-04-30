@@ -2,6 +2,7 @@ package app.burnout.calibrate
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -270,5 +271,40 @@ class ZonesTest {
         for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
         val parent = Zone(40, 40, 80, 80, 0.1f, floatArrayOf(0f, 1f, 0f))
         assertNull(Zones.splitZone(bmp, parent))
+    }
+
+    // ---- maxBucketPresent (Phase 9A.2) ----
+
+    @Test
+    fun maxBucketPresent_single_channel_finds_highest_severity_in_zone() {
+        val bmp = blank(200, 200)
+        // G channel: paint sev-1 (63) and sev-3 (191) marks within the zone.
+        for (y in 50..55) for (x in 50..55) bmp.setPixel(x, y, Color.argb(255, 0, 63, 0))
+        for (y in 60..65) for (x in 50..55) bmp.setPixel(x, y, Color.argb(255, 0, 191, 0))
+        val zone = Zone(40, 40, 65, 75, 0.1f, floatArrayOf(0f, 1f, 0f))
+        val mbp = Zones.maxBucketPresent(bmp, zone)
+        assertEquals(0, mbp[0])  // R has no marks → bucket 0
+        assertEquals(3, mbp[1])  // G max = sev-3 (wearValue 191 → bucket 3)
+        assertEquals(0, mbp[2])  // B has no marks → bucket 0
+    }
+
+    @Test
+    fun maxBucketPresent_unmarked_zone_returns_zero_per_channel() {
+        val bmp = blank(200, 200)
+        val zone = Zone(40, 40, 80, 80, 0.1f, floatArrayOf(1f, 0f, 0f))
+        val mbp = Zones.maxBucketPresent(bmp, zone)
+        assertArrayEquals(intArrayOf(0, 0, 0), mbp)
+    }
+
+    @Test
+    fun maxBucketPresent_multichannel_zone_reports_per_channel_max() {
+        val bmp = blank(200, 200)
+        // Mixed: R sev-2 (127), G sev-4 (255), B nothing.
+        for (y in 50..60) for (x in 50..60) bmp.setPixel(x, y, Color.argb(255, 127, 255, 0))
+        val zone = Zone(40, 40, 70, 70, 0.1f, floatArrayOf(1f, 1f, 0f))
+        val mbp = Zones.maxBucketPresent(bmp, zone)
+        assertEquals(2, mbp[0])  // R sev-2
+        assertEquals(4, mbp[1])  // G sev-4
+        assertEquals(0, mbp[2])  // B unmarked
     }
 }
