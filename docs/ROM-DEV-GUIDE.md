@@ -6,10 +6,11 @@ How to integrate burn-out into your LineageOS-based ROM.
 
 After applying burn-out's patches and rebuilding your ROM:
 
-- A `BurnoutFilter` post-pass on `SkiaRenderEngine` that runs per-frame and can dim per-pixel/per-zone areas to compensate for OLED burn-in.
+- A `BurnoutFilter` post-pass on `SkiaRenderEngine` that runs per-frame and dims per-pixel/per-zone to compensate for OLED burn-in. Up to 12 zones, per-channel dim. Single-pass shader; no measurable framerate impact.
+- A bundled platform-signed system app (`Burn-out`, package `app.burnout`) at `/system/app/Burnout/`. Runs as the `system` UID via `sharedUserId="android.uid.system"` and writes directly to `/data/burnout/`. Gives end users on-device Mark + Calibrate UIs — no Magisk, no root prompt.
 - A Quick Settings tile (`Burn-out Fix`) that toggles `persist.sys.burnout.enabled`.
-- Sepolicy types (`burnout_data_file`, `burnout_prop`, `burnout_app` stub) and rules.
-- Factory bake-in: blank default mask + empty zones config at `/system/etc/burnout/`. Users see no correction effect until they paint a mask (Phase 3 system app, or manually pushed via tooling).
+- Sepolicy: `burnout_data_file`, `burnout_prop`, the operative `burnout_app` domain with `seapp_contexts` mapping, and the private `burnout_app_data_file` type for `/data/data/app.burnout/`.
+- Factory bake-in: blank default mask + empty zones config at `/system/etc/burnout/`. Users see no correction effect until they paint a mask via the Burn-out app.
 
 ## Adoption steps
 
@@ -23,7 +24,7 @@ After applying burn-out's patches and rebuilding your ROM:
    cd ~/android/lineage
    bash ~/projects/burn-out/scripts/apply-patches.sh
    ```
-   This applies four patches and copies the bundled blank factory assets to `vendor/lineage/burnout/factory/`.
+   This applies four patches (BurnoutFilter, sepolicy, QS tile, multi-device bake-in template), rsyncs the Burn-out system app source tree from `patches/05-burnout-app/` into `vendor/lineage/burnout/app/`, and copies the bundled blank factory assets to `vendor/lineage/burnout/factory/`.
 
 3. Edit your device's `device.mk` to include the bake-in template:
    ```makefile
@@ -38,13 +39,12 @@ After applying burn-out's patches and rebuilding your ROM:
      <width> <height> ~/android/lineage/vendor/lineage/burnout/factory/
    ```
 
-4. Build the ROM normally (`mka bacon` or your usual flow). The Burn-out QS tile will appear in the Edit picker.
+4. Build the ROM normally (`mka bacon` or your usual flow). The bake-in `include` adds `Burnout` to `PRODUCT_PACKAGES`, so the system app gets compiled by Soong and bundled into `/system/app/Burnout/` automatically. After flashing, the Burn-out app appears in the launcher and the Burn-out Fix tile is in the Quick Settings Edit picker.
 
-## What's not yet shipped (as of Phase 2)
+## What's not yet shipped
 
-- The Burn-out system app (Mark + Calibrate modes). Phase 3+. End users have no on-device way to paint or tune their mask yet.
-- The desktop editor. Phase 7+.
-- The `burnout_app` SELinux domain has a type stub but no `seapp_contexts` mapping. Phase 3+.
+- A desktop pixel editor for finer-grained mask tuning from a laptop. The on-device Mark + Calibrate UIs cover the main flow; the desktop editor is a power-user track. The Calibrate activity already runs a `LocalServerSocket` named `burnout-mask` (reach via `adb forward tcp:<port> localabstract:burnout-mask`) for an editor to connect to once it's built.
+- Shape primitives (circle/triangle drag) for non-rectangular zones. Currently zones are auto-detected 8-connected components from painted marks, with manual rectangle Add via corner-tap. Shape primitives are part of the desktop editor track.
 
 ## Verification
 
@@ -52,6 +52,8 @@ After a clean ROM build + flash:
 
 - `getprop persist.sys.burnout.enabled` returns empty (default-on; only explicit "0" disables).
 - `ls /system/etc/burnout/` shows `mask.png` + `zones.json`.
-- Quick Settings → Edit → "Burn-out Fix" tile is available.
-- Tapping the tile flips the prop. Logcat shows `BurnoutFilter` lines on each transition.
-- AVC denials for `burnout_data_file` / `burnout_prop` should NOT appear in `dmesg | grep avc`. If they do, sepolicy is misapplied.
+- `ls /system/app/Burnout/` shows `Burnout.apk` (~7.5 MB, platform-signed).
+- The Burn-out app appears in the launcher.
+- Quick Settings → Edit → "Burn-out Fix" tile is available. Tapping it flips `persist.sys.burnout.enabled`; logcat shows `BurnoutFilter` lines on each transition.
+- Paint a few marks via Mark mode → return → open Calibrate → tap Save. Logcat shows `commit direct: wrote /data/burnout/{mask.png,zones.json}` (the `burnout_app`-domain direct-IO path; if it falls back to su, Save will fail on a non-Magisk ROM).
+- AVC denials for `burnout_data_file` / `burnout_prop` / `burnout_app` should NOT appear in `dmesg | grep avc`. If they do, sepolicy is misapplied.
