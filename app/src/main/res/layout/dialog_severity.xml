@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:id="@+id/row_01"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingVertical="4dp">
+        <ImageButton android:id="@+id/lock_01"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_lock_open"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/severity_lock_label"/>
+        <TextView
+            android:layout_width="48dp"
+            android:layout_height="wrap_content"
+            android:text="@string/severity_label_01"
+            android:textColor="?android:attr/textColorPrimary"/>
+        <SeekBar android:id="@+id/seek_01"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="100"/>
+        <TextView android:id="@+id/val_01"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="25"
+            android:textColor="?android:attr/textColorPrimary"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/row_12"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingVertical="4dp">
+        <ImageButton android:id="@+id/lock_12"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_lock_open"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/severity_lock_label"/>
+        <TextView
+            android:layout_width="48dp"
+            android:layout_height="wrap_content"
+            android:text="@string/severity_label_12"
+            android:textColor="?android:attr/textColorPrimary"/>
+        <SeekBar android:id="@+id/seek_12"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="100"/>
+        <TextView android:id="@+id/val_12"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="25"
+            android:textColor="?android:attr/textColorPrimary"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/row_23"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingVertical="4dp">
+        <ImageButton android:id="@+id/lock_23"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_lock_open"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/severity_lock_label"/>
+        <TextView
+            android:layout_width="48dp"
+            android:layout_height="wrap_content"
+            android:text="@string/severity_label_23"
+            android:textColor="?android:attr/textColorPrimary"/>
+        <SeekBar android:id="@+id/seek_23"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="100"/>
+        <TextView android:id="@+id/val_23"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="25"
+            android:textColor="?android:attr/textColorPrimary"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/row_34"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingVertical="4dp">
+        <ImageButton android:id="@+id/lock_34"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_lock_open"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/severity_lock_label"/>
+        <TextView
+            android:layout_width="48dp"
+            android:layout_height="wrap_content"
+            android:text="@string/severity_label_34"
+            android:textColor="?android:attr/textColorPrimary"/>
+        <SeekBar android:id="@+id/seek_34"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="100"/>
+        <TextView android:id="@+id/val_34"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="25"
+            android:textColor="?android:attr/textColorPrimary"/>
+    </LinearLayout>
+
+    <TextView android:id="@+id/sum_readout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:paddingTop="8dp"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="12sp"
+        android:text="@string/severity_sum_100"/>
+</LinearLayout>

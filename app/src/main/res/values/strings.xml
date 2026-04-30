@@ -29,4 +29,14 @@
     <string name="calibrate_add_banner">Tap two opposite corners (tap ADD again to cancel)</string>
     <string name="calibrate_add_no_marks">No marks in selection — paint first</string>
     <string name="calibrate_at_cap">Zone cap reached (12)</string>
+    <string name="calibrate_tune_severity">TUNE SEVERITY</string>
+    <string name="severity_dialog_title">Tune severity</string>
+    <string name="severity_label_01">0→1</string>
+    <string name="severity_label_12">1→2</string>
+    <string name="severity_label_23">2→3</string>
+    <string name="severity_label_34">3→4</string>
+    <string name="severity_lock_label">lock</string>
+    <string name="severity_sum_100">Sum: 100</string>
+    <string name="severity_sum_format">Sum: %1$d</string>
+    <string name="severity_min_unlocked">Need at least 2 unlocked sliders to adjust</string>
 </resources>
