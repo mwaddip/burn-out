@@ -22,7 +22,7 @@ PyQt5 may also be installable from your distro's package manager (`apt install p
 
 ## Releases
 
-Pre-built bundles are attached to each tagged release on the [GitHub Releases page](https://github.com/REPLACE-WITH-REPO/releases) (URL fixed up at first push):
+Pre-built bundles are attached to each tagged release on the [GitHub Releases page](https://github.com/mwaddip/burn-out/releases) (URL fixed up at first push):
 
 | OS | Asset | Notes |
 |---|---|---|
