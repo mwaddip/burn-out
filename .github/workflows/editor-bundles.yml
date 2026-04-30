@@ -1,0 +1,68 @@
+name: editor-bundles
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: burnout-editor-macos.dmg
+          - os: windows-latest
+            artifact: burnout-editor-windows.exe
+          - os: ubuntu-latest
+            artifact: burnout-editor-linux-x86_64.tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r desktop-editor/requirements-dev.txt
+
+      - name: Build macOS bundle
+        if: matrix.os == 'macos-latest'
+        run: |
+          python -m PyInstaller --noconfirm --windowed --name burnout-editor desktop-editor/editor.py
+          hdiutil create -volname "Burn-out Editor" -srcfolder dist/burnout-editor.app -ov -format UDZO ${{ matrix.artifact }}
+
+      - name: Build Windows bundle
+        if: matrix.os == 'windows-latest'
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed --name burnout-editor desktop-editor/editor.py
+          copy dist\burnout-editor.exe ${{ matrix.artifact }}
+        shell: cmd
+
+      - name: Build Linux bundle
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python -m PyInstaller --noconfirm --onefile --name burnout-editor desktop-editor/editor.py
+          tar czf ${{ matrix.artifact }} -C dist burnout-editor
+
+      - name: Upload job artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
