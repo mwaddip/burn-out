@@ -47,7 +47,8 @@ def rasterize_circle(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]
 # 8 orientations form a CW rotation starting from "point up":
 #   0=N (^)   1=NE (point at top-right corner)   2=E (>)   3=SE
 #   4=S (v)   5=SW                                6=W (<)   7=NW
-def _triangle_vertices(x0: int, y0: int, x1: int, y1: int, orientation: int):
+# Public so the GUI can draw a matching drag preview.
+def triangle_vertices(x0, y0, x1, y1, orientation: int):
     cx = (x0 + x1) / 2.0
     cy = (y0 + y1) / 2.0
     layouts = {
@@ -78,7 +79,7 @@ def rasterize_triangle(
     if orientation not in range(8):
         raise ValueError(f"orientation must be in 0..7, got {orientation}")
     x0, y0, x1, y1 = _normalize(x0, y0, x1, y1)
-    v0, v1, v2 = _triangle_vertices(x0, y0, x1, y1, orientation)
+    v0, v1, v2 = triangle_vertices(x0, y0, x1, y1, orientation)
 
     out: list[tuple[int, int]] = []
     for y in range(y0, y1 + 1):

@@ -20,13 +20,14 @@ import socket
 import sys
 import threading
 
-from PyQt5.QtCore import Qt, QRectF, QPoint, QRect, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QRectF, QPoint, QPointF, QRect, pyqtSignal
 from PyQt5.QtGui import (
-    QImage, QPixmap, QPainter, QColor, QBrush, QWheelEvent, QMouseEvent,
+    QImage, QPixmap, QPainter, QPen, QPainterPath, QPolygonF,
+    QColor, QBrush, QWheelEvent, QMouseEvent,
 )
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QSpinBox, QGraphicsView, QGraphicsScene, QRubberBand, QListWidget, QListWidgetItem,
+    QSpinBox, QGraphicsView, QGraphicsScene, QListWidget, QListWidgetItem,
     QSplitter, QButtonGroup,
 )
 
@@ -145,10 +146,15 @@ class ZoneView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self._rubber = QRubberBand(QRubberBand.Rectangle, self.viewport())
         self._press_pos: QPoint | None = None
         self._press_button: int | None = None
         self._drag_active = False
+        # Shape preview state: a QGraphicsPathItem added during a drag, removed
+        # on release. Shape index + triangle orientation come from the host
+        # MainWindow via set_shape().
+        self._shape_index = 0
+        self._tri_orient = 0
+        self._preview_item = None
 
     def show_zone(self, full_pixmap: QPixmap, zone: dict):
         same_bbox = (
@@ -160,6 +166,7 @@ class ZoneView(QGraphicsView):
         x0, y0, x1, y1 = zone["x0"], zone["y0"], zone["x1"], zone["y1"]
         w = x1 - x0 + 1; h = y1 - y0 + 1
         cropped = _brighten_pixmap(full_pixmap.copy(x0, y0, w, h), white_bg=not self._bbox_bg_dark)
+        self._preview_item = None  # scene.clear() drops the item; reset our reference.
         self._scene.clear()
         self._scene.addPixmap(cropped)
         self.setSceneRect(QRectF(0, 0, w, h))
@@ -172,6 +179,50 @@ class ZoneView(QGraphicsView):
 
     def set_bbox_bg_dark(self, dark: bool):
         self._bbox_bg_dark = dark
+
+    def set_shape(self, shape_index: int, tri_orient: int = 0):
+        """Update the shape used for the drag-preview overlay (and matches whatever
+        rasterizer the host MainWindow will dispatch to in on_area)."""
+        self._shape_index = shape_index
+        self._tri_orient = tri_orient
+
+    def _remove_preview(self):
+        if self._preview_item is not None:
+            try:
+                self._scene.removeItem(self._preview_item)
+            except Exception:
+                pass
+            self._preview_item = None
+
+    def _update_preview(self, current_view_pos: QPoint):
+        p1 = self.mapToScene(self._press_pos)
+        p2 = self.mapToScene(current_view_pos)
+        sx0 = min(p1.x(), p2.x()); sy0 = min(p1.y(), p2.y())
+        sx1 = max(p1.x(), p2.x()); sy1 = max(p1.y(), p2.y())
+        path = self._shape_path(sx0, sy0, sx1, sy1)
+        if self._preview_item is None:
+            color = QColor(255, 220, 60) if self._press_button == Qt.LeftButton else QColor(220, 60, 60)
+            pen = QPen(color, 2.0)
+            pen.setCosmetic(True)  # constant width regardless of zoom
+            self._preview_item = self._scene.addPath(path, pen)
+        else:
+            self._preview_item.setPath(path)
+
+    def _shape_path(self, sx0: float, sy0: float, sx1: float, sy1: float) -> QPainterPath:
+        path = QPainterPath()
+        if self._shape_index == 0:
+            path.addRect(QRectF(sx0, sy0, sx1 - sx0, sy1 - sy0))
+        elif self._shape_index == 1:
+            w = sx1 - sx0; h = sy1 - sy0
+            d = min(w, h)
+            cx = (sx0 + sx1) / 2.0; cy = (sy0 + sy1) / 2.0
+            path.addEllipse(QRectF(cx - d / 2.0, cy - d / 2.0, d, d))
+        else:
+            verts = shapes.triangle_vertices(sx0, sy0, sx1, sy1, self._tri_orient)
+            poly = QPolygonF([QPointF(x, y) for x, y in verts])
+            path.addPolygon(poly)
+            path.closeSubpath()
+        return path
 
     def wheelEvent(self, ev: QWheelEvent):
         delta = ev.angleDelta().y() / 120
@@ -194,8 +245,7 @@ class ZoneView(QGraphicsView):
             self._press_pos = ev.pos()
             self._press_button = ev.button()
             self._drag_active = False
-            self._rubber.setGeometry(QRect(self._press_pos, QSize(0, 0)))
-            self._rubber.show()
+            self._remove_preview()
         else:
             super().mousePressEvent(ev)
 
@@ -204,13 +254,14 @@ class ZoneView(QGraphicsView):
             rect = QRect(self._press_pos, ev.pos()).normalized()
             if rect.width() >= self.DRAG_THRESHOLD or rect.height() >= self.DRAG_THRESHOLD:
                 self._drag_active = True
-            self._rubber.setGeometry(rect)
+            if self._drag_active:
+                self._update_preview(ev.pos())
         else:
             super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev: QMouseEvent):
         if self._press_pos is not None and ev.button() == self._press_button:
-            self._rubber.hide()
+            self._remove_preview()
             release_pos = ev.pos()
             press_pos = self._press_pos
             drag = self._drag_active
@@ -347,10 +398,12 @@ class MainWindow(QMainWindow):
         self.btn_rot_ccw.setEnabled(is_tri)
         self.btn_rot_cw.setEnabled(is_tri)
         self.lbl_orient.setEnabled(is_tri)
+        self.zone_view.set_shape(shape_id, self._tri_orient)
 
     def _rotate_triangle(self, delta: int):
         self._tri_orient = (self._tri_orient + delta) % 8
         self.lbl_orient.setText(f"({_ORIENT_LABELS[self._tri_orient]})")
+        self.zone_view.set_shape(self._current_shape, self._tri_orient)
 
     # --- network ---
 
@@ -468,9 +521,14 @@ class MainWindow(QMainWindow):
             for (px, py) in pixels
         ]
         try:
-            self.client.toggle_pixels(edits)
+            resp = self.client.toggle_pixels(edits)
         except Exception as e:
             self.status.showMessage(f"{shape_name} push failed ({len(pixels)}px): {e}")
+            return
+        if not resp.get("ok"):
+            self.status.showMessage(
+                f"{shape_name} push rejected ({len(pixels)}px): {resp.get('error', '?')}"
+            )
             return
         action = "cleared" if sev == 0 else f"marked sev={sev}"
         self.status.showMessage(
