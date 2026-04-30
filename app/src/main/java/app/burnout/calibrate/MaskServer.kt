@@ -91,25 +91,7 @@ class MaskServer(
         when (req.getString("op")) {
             "ping" -> writeJson(out, JSONObject().put("ok", true))
 
-            "get_meta" -> {
-                val s = handler.snapshotMeta()
-                val zarr = JSONArray()
-                s.zones.forEach { z ->
-                    zarr.put(JSONObject()
-                        .put("x0", z.x0).put("y0", z.y0)
-                        .put("x1", z.x1).put("y1", z.y1)
-                        .put("dim", z.dim.toDouble()))
-                }
-                writeJson(out, JSONObject()
-                    .put("ok", true)
-                    .put("mask_w", s.maskW).put("mask_h", s.maskH)
-                    .put("selected_zone", s.selectedZone)
-                    .put("falloff_radius_px", s.falloffRadiusPx.toDouble())
-                    .put("global_dim", s.globalDim.toDouble())
-                    .put("max_wear", JSONArray()
-                        .put(s.maxWearR.toDouble()).put(s.maxWearG.toDouble()).put(s.maxWearB.toDouble()))
-                    .put("zones", zarr))
-            }
+            "get_meta" -> writeJson(out, buildMetaJson(handler.snapshotMeta()))
 
             "get_mask" -> {
                 val bmp = handler.snapshotMaskBitmap()
@@ -174,5 +156,30 @@ class MaskServer(
         out.flush()
     }
 
-    companion object { const val TAG = "MaskServer" }
+    companion object {
+        const val TAG = "MaskServer"
+
+        internal fun buildMetaJson(s: MetaSnapshot): JSONObject {
+            val zarr = JSONArray()
+            s.zones.forEach { z ->
+                zarr.put(JSONObject()
+                    .put("x0", z.x0).put("y0", z.y0)
+                    .put("x1", z.x1).put("y1", z.y1)
+                    .put("dim", z.dim.toDouble())
+                    .put("channels", JSONArray()
+                        .put(z.channels[0].toInt())
+                        .put(z.channels[1].toInt())
+                        .put(z.channels[2].toInt())))
+            }
+            return JSONObject()
+                .put("ok", true)
+                .put("mask_w", s.maskW).put("mask_h", s.maskH)
+                .put("selected_zone", s.selectedZone)
+                .put("falloff_radius_px", s.falloffRadiusPx.toDouble())
+                .put("global_dim", s.globalDim.toDouble())
+                .put("max_wear", JSONArray()
+                    .put(s.maxWearR.toDouble()).put(s.maxWearG.toDouble()).put(s.maxWearB.toDouble()))
+                .put("zones", zarr)
+        }
+    }
 }
