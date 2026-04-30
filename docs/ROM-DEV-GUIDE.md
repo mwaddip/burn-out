@@ -41,10 +41,15 @@ After applying burn-out's patches and rebuilding your ROM:
 
 4. Build the ROM normally (`mka bacon` or your usual flow). The bake-in `include` adds `Burnout` to `PRODUCT_PACKAGES`, so the system app gets compiled by Soong and bundled into `/system/app/Burnout/` automatically. After flashing, the Burn-out app appears in the launcher and the Burn-out Fix tile is in the Quick Settings Edit picker.
 
+## End-user tooling (not part of the ROM)
+
+The bundled Burn-out system app (Mark + Calibrate) is the primary end-user UX. For power users who want pixel-precision mask edits from a laptop, the project includes a separate desktop editor at `desktop-editor/editor.py` (PyQt5). It connects to the on-device Calibrate via `adb forward tcp:<port> localabstract:burnout-mask` and supports drag-shape primitives (rect, circle, triangle in 8 orientations). See `desktop-editor/README.md` for setup.
+
+ROM devs don't need to ship the editor — it's a user-installed laptop tool, separate from the ROM.
+
 ## What's not yet shipped
 
-- A desktop pixel editor for finer-grained mask tuning from a laptop. The on-device Mark + Calibrate UIs cover the main flow; the desktop editor is a power-user track. The Calibrate activity already runs a `LocalServerSocket` named `burnout-mask` (reach via `adb forward tcp:<port> localabstract:burnout-mask`) for an editor to connect to once it's built.
-- Shape primitives (circle/triangle drag) for non-rectangular zones. Currently zones are auto-detected 8-connected components from painted marks, with manual rectangle Add via corner-tap. Shape primitives are part of the desktop editor track.
+- Pre-built `.dmg` / `.exe` / `.AppImage` bundles of the desktop editor. Currently distributed as Python source (`pip install -r desktop-editor/requirements.txt`).
 
 ## Verification
 
