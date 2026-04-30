@@ -28,6 +28,7 @@ class CalibrateActivity : AppCompatActivity() {
 
     private val state = CorrectionState()
     private lateinit var glView: GLSurfaceView
+    private lateinit var renderer: CorrectionRenderer
     private lateinit var statusLine: TextView
     private lateinit var seekDim: SeekBar
     private lateinit var btnZone: Button
@@ -58,7 +59,8 @@ class CalibrateActivity : AppCompatActivity() {
 
         glView = findViewById(R.id.gl_view)
         glView.setEGLContextClientVersion(3)
-        glView.setRenderer(CorrectionRenderer(this, state))
+        renderer = CorrectionRenderer(this, state)
+        glView.setRenderer(renderer)
         glView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
         glView.setOnTouchListener { _, ev ->
             if (addState == AddState.IDLE) return@setOnTouchListener false
@@ -128,6 +130,7 @@ class CalibrateActivity : AppCompatActivity() {
                 syncSliderToSelectedZone()
                 updateStatus()
                 updateZoneButtonStates()
+                refreshMaxBucketPresent()
             }
         }
     }
@@ -141,6 +144,25 @@ class CalibrateActivity : AppCompatActivity() {
         } catch (e: Exception) {
             android.util.Log.w(TAG, "preset autosave write failed", e)
         }
+    }
+
+    /**
+     * Recompute per-zone-per-channel max severity bucket and push to the renderer.
+     * Called after any zone-list mutation (mask reload, Add, Delete, Split) so the
+     * shader's zoneMaxEffWear uniforms stay in sync. Cheap: 12 zones × bbox scan.
+     */
+    private fun refreshMaxBucketPresent() {
+        val bmp = state.maskBitmap ?: return
+        val out = IntArray(CorrectionState.MAX_ZONES * 3)
+        state.zones.forEachIndexed { idx, zone ->
+            if (idx >= CorrectionState.MAX_ZONES) return@forEachIndexed
+            val mbp = Zones.maxBucketPresent(bmp, zone)
+            out[idx * 3 + 0] = mbp[0]
+            out[idx * 3 + 1] = mbp[1]
+            out[idx * 3 + 2] = mbp[2]
+        }
+        renderer.setMaxBucketPresent(out)
+        glView.requestRender()
     }
 
     // ---------- Save (live commit to /data/burnout/) ----------
@@ -445,6 +467,7 @@ class CalibrateActivity : AppCompatActivity() {
         updateZoneButtonStates()
         syncSliderToSelectedZone()
         updateStatus()
+        refreshMaxBucketPresent()
     }
 
     private fun splitSelectedZone() {
@@ -469,6 +492,7 @@ class CalibrateActivity : AppCompatActivity() {
         updateZoneButtonStates()
         syncSliderToSelectedZone()
         updateStatus()
+        refreshMaxBucketPresent()
     }
 
     private fun updateZoneButtonStates() {
@@ -532,6 +556,7 @@ class CalibrateActivity : AppCompatActivity() {
         syncSliderToSelectedZone()
         updateStatus()
         updateZoneButtonStates()
+        refreshMaxBucketPresent()
     }
 
     private fun startAddMode() {
