@@ -24,6 +24,12 @@ class CorrectionRenderer(
     private val zonesUv = FloatArray(CorrectionState.MAX_ZONES * 4)
     private val zonesDim = FloatArray(CorrectionState.MAX_ZONES)
     private val zonesChannels = FloatArray(CorrectionState.MAX_ZONES * 3)
+    private val sevWearFraction = FloatArray(5)
+    private val zoneMaxEffWear = FloatArray(CorrectionState.MAX_ZONES * 3)
+    // Cached per-zone-per-channel max bucket; refreshed when zones change.
+    // Indexed [zone * 3 + channel]. Default zeros mean "no wear in this zone in this channel" →
+    // shader's step(1e-6, zoneMaxEff) fallback gives factor=1 (legacy behavior) until populated.
+    private val maxBucketPresent = IntArray(CorrectionState.MAX_ZONES * 3)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -37,7 +43,8 @@ class CorrectionRenderer(
                          "u_simulatePanel", "u_wearStrength",
                          "u_zoneCount", "u_zones", "u_zoneDims", "u_zoneChannels",
                          "u_selectedZone", "u_pxToUV",
-                         "u_maskSizePx", "u_falloffRadiusPx", "u_globalDim")) {
+                         "u_maskSizePx", "u_falloffRadiusPx", "u_globalDim",
+                         "u_sevWearFraction", "u_zoneMaxEffWear")) {
             uniforms[n] = GLES30.glGetUniformLocation(program, n)
         }
         quadBuf = ByteBuffer.allocateDirect(4 * 8).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
@@ -114,10 +121,36 @@ class CorrectionRenderer(
         GLES30.glUniform1f(uniforms["u_falloffRadiusPx"]!!, state.falloffRadiusPx)
         GLES30.glUniform3f(uniforms["u_globalDim"]!!, state.globalDim[0], state.globalDim[1], state.globalDim[2])
 
+        // Severity-aware uniforms.
+        val frac = state.sevWearFraction()
+        for (i in 0..4) sevWearFraction[i] = frac[i]
+        GLES30.glUniform1fv(uniforms["u_sevWearFraction"]!!, 5, sevWearFraction, 0)
+
+        // zoneMaxEffWear: combine cached maxBucketPresent with current sevWearFraction.
+        for (i in 0 until CorrectionState.MAX_ZONES) {
+            for (c in 0..2) {
+                val bucket = maxBucketPresent[i * 3 + c].coerceIn(0, 4)
+                zoneMaxEffWear[i * 3 + c] = sevWearFraction[bucket]
+            }
+        }
+        GLES30.glUniform3fv(uniforms["u_zoneMaxEffWear"]!!, CorrectionState.MAX_ZONES, zoneMaxEffWear, 0)
+
         GLES30.glEnableVertexAttribArray(aPos)
         GLES30.glVertexAttribPointer(aPos, 2, GLES30.GL_FLOAT, false, 0, quadBuf)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         GLES30.glDisableVertexAttribArray(aPos)
+    }
+
+    /**
+     * Called from CalibrateActivity when the mask is (re)loaded or zones are added / deleted / split.
+     * Stores per-zone-per-channel max bucket so onDrawFrame can re-derive zoneMaxEffWear cheaply
+     * when severity-fraction sliders move (no per-zone mask scan required).
+     */
+    fun setMaxBucketPresent(perZonePerChannel: IntArray) {
+        require(perZonePerChannel.size == CorrectionState.MAX_ZONES * 3) {
+            "expected ${CorrectionState.MAX_ZONES * 3} ints, got ${perZonePerChannel.size}"
+        }
+        System.arraycopy(perZonePerChannel, 0, maxBucketPresent, 0, perZonePerChannel.size)
     }
 
     private fun readAsset(name: String): String =

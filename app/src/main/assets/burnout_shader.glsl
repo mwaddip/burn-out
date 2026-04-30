@@ -19,6 +19,8 @@ uniform vec2 u_pxToUV;             // (1/maskW, 1/maskH) — also used for outli
 uniform vec2 u_maskSizePx;         // (maskW, maskH)
 uniform float u_falloffRadiusPx;   // outward linear-ramp radius around each bbox
 uniform vec3 u_globalDim;          // per-channel baseline dim (R, G, B). Each channel independent.
+uniform float u_sevWearFraction[5]; // cumulative bucket-to-wear-fraction lookup [0, c1, c2, c3, 1.0]
+uniform vec3 u_zoneMaxEffWear[12];  // per-zone-per-channel max effective wear (0..1)
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -53,31 +55,46 @@ void main() {
     vec3 outLin = lin;
 
     if (u_correctionOn == 1) {
-        bool marked = max(wearRaw.r, max(wearRaw.g, wearRaw.b)) > 0.001;
-        if (!marked) {
-            float zw = 0.0;
-            float zd = 0.0;
-            vec3 zoneCh = vec3(0.0);   // dominant zone's channel mask
-            for (int i = 0; i < 12; ++i) {
-                if (i >= u_zoneCount) break;
-                float w = zoneWeight(v_uv, u_zones[i], u_falloffRadiusPx);
-                if (w > zw) { zw = w; zd = u_zoneDims[i]; zoneCh = u_zoneChannels[i]; }
-                else if (w == zw && u_zoneDims[i] > zd) { zd = u_zoneDims[i]; zoneCh = u_zoneChannels[i]; }
+        // Per-pixel effective wear via sevWearFraction[] lookup.
+        // Round wearChannels * 4 to nearest int → bucket index 0..4.
+        ivec3 bucket = ivec3(round(wearRaw * 4.0));
+        bucket = clamp(bucket, ivec3(0), ivec3(4));
+        vec3 effWear = vec3(
+            u_sevWearFraction[bucket.r],
+            u_sevWearFraction[bucket.g],
+            u_sevWearFraction[bucket.b]
+        );
+
+        float zw = 0.0;
+        float zd = 0.0;
+        vec3 zoneCh = vec3(0.0);
+        vec3 zoneMaxEff = vec3(0.0);
+        for (int i = 0; i < 12; ++i) {
+            if (i >= u_zoneCount) break;
+            float w = zoneWeight(v_uv, u_zones[i], u_falloffRadiusPx);
+            if (w > zw || (w == zw && u_zoneDims[i] > zd)) {
+                zw = w; zd = u_zoneDims[i];
+                zoneCh = u_zoneChannels[i];
+                zoneMaxEff = u_zoneMaxEffWear[i];
             }
-            // Per-channel dim assembled as two independent terms:
-            //   - zone term: only the dominant zone's painted channels, each channel mixed
-            //     between its u_globalDim baseline and the zone's zd as zw goes 0→1.
-            //   - baseline term: channels NOT in the dominant zone get their per-channel u_globalDim.
-            // No global-wear gate on the baseline term — sliders are pure manual controls. A user can
-            // intentionally dim a clean (unworn) channel to compensate the panel for dimming on other
-            // channels (color rebalancing). Default slider value is 0, so unworn channels stay
-            // untouched unless explicitly tuned.
-            vec3 zoneDimV = mix(u_globalDim, vec3(zd), zw);   // per-channel (each channel ramps independently)
-            vec3 nonZoneCh = vec3(1.0) - zoneCh;
-            vec3 dimV = clamp(zoneCh * zoneDimV + nonZoneCh * u_globalDim,
-                              vec3(0.0), vec3(0.99));
-            outLin = lin * (vec3(1.0) - dimV);
         }
+
+        // Severity factor: 1.0 for unmarked (or factor=1 fallback), 0.0 at zone-max-wear,
+        // linear in between. Channels with zoneMaxEff == 0 (zone has no wear in this channel)
+        // fall back to factor=1 — unmarked-style baseline behavior, gated by zoneCh below.
+        vec3 factor = clamp(
+            (zoneMaxEff - effWear) / max(zoneMaxEff, vec3(1e-6)),
+            vec3(0.0), vec3(1.0));
+        factor = mix(vec3(1.0), factor, step(vec3(1e-6), zoneMaxEff));
+
+        vec3 zoneDimV = mix(u_globalDim, vec3(zd), zw);
+        vec3 nonZoneCh = vec3(1.0) - zoneCh;
+        // Apply factor only to the zone term; baseline (non-zone) channels stay full-strength
+        // (their globalDim is the manual rebalancing knob, unrelated to per-pixel severity).
+        vec3 dimV = clamp(
+            zoneCh * zoneDimV * factor + nonZoneCh * u_globalDim,
+            vec3(0.0), vec3(0.99));
+        outLin = lin * (vec3(1.0) - dimV);
     }
 
     outLin = clamp(outLin, 0.0, 1.0);
