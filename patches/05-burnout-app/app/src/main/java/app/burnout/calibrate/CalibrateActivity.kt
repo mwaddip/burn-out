@@ -11,9 +11,11 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import app.burnout.R
 import app.burnout.mark.DraggableOverlay
@@ -28,6 +30,7 @@ class CalibrateActivity : AppCompatActivity() {
 
     private val state = CorrectionState()
     private lateinit var glView: GLSurfaceView
+    private lateinit var renderer: CorrectionRenderer
     private lateinit var statusLine: TextView
     private lateinit var seekDim: SeekBar
     private lateinit var btnZone: Button
@@ -58,7 +61,8 @@ class CalibrateActivity : AppCompatActivity() {
 
         glView = findViewById(R.id.gl_view)
         glView.setEGLContextClientVersion(3)
-        glView.setRenderer(CorrectionRenderer(this, state))
+        renderer = CorrectionRenderer(this, state)
+        glView.setRenderer(renderer)
         glView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
         glView.setOnTouchListener { _, ev ->
             if (addState == AddState.IDLE) return@setOnTouchListener false
@@ -128,6 +132,7 @@ class CalibrateActivity : AppCompatActivity() {
                 syncSliderToSelectedZone()
                 updateStatus()
                 updateZoneButtonStates()
+                refreshMaxBucketPresent()
             }
         }
     }
@@ -141,6 +146,119 @@ class CalibrateActivity : AppCompatActivity() {
         } catch (e: Exception) {
             android.util.Log.w(TAG, "preset autosave write failed", e)
         }
+    }
+
+    /**
+     * Open the Tune-severity dialog: 4 sliders + per-slider lock toggles.
+     * Live preview pushes uniforms via glView.requestRender() while dragging;
+     * Cancel/back-press restores the pre-open snapshot, Done persists.
+     */
+    private fun showSeverityDialog() {
+        val snapGaps = state.severityGaps.copyOf()
+        val snapLocks = state.severityLocks.copyOf()
+
+        val view = layoutInflater.inflate(R.layout.dialog_severity, null)
+        val seeks = listOf(
+            view.findViewById<SeekBar>(R.id.seek_01),
+            view.findViewById<SeekBar>(R.id.seek_12),
+            view.findViewById<SeekBar>(R.id.seek_23),
+            view.findViewById<SeekBar>(R.id.seek_34),
+        )
+        val vals = listOf(
+            view.findViewById<TextView>(R.id.val_01),
+            view.findViewById<TextView>(R.id.val_12),
+            view.findViewById<TextView>(R.id.val_23),
+            view.findViewById<TextView>(R.id.val_34),
+        )
+        val lockBtns = listOf(
+            view.findViewById<ImageButton>(R.id.lock_01),
+            view.findViewById<ImageButton>(R.id.lock_12),
+            view.findViewById<ImageButton>(R.id.lock_23),
+            view.findViewById<ImageButton>(R.id.lock_34),
+        )
+        val sumReadout = view.findViewById<TextView>(R.id.sum_readout)
+
+        fun refreshAll() {
+            for (j in 0..3) {
+                if (seeks[j].progress != state.severityGaps[j]) {
+                    seeks[j].progress = state.severityGaps[j]
+                }
+                vals[j].text = state.severityGaps[j].toString()
+                lockBtns[j].setImageResource(
+                    if (state.severityLocks[j]) R.drawable.ic_lock_closed
+                    else R.drawable.ic_lock_open
+                )
+                seeks[j].isEnabled = !state.severityLocks[j]
+            }
+            sumReadout.text = getString(R.string.severity_sum_format, state.severityGaps.sum())
+        }
+        refreshAll()
+
+        // Lock toggle handlers — enforce ≥2 unlocked.
+        for (i in 0..3) {
+            lockBtns[i].setOnClickListener {
+                val wantLock = !state.severityLocks[i]
+                if (wantLock && state.severityLocks.count { !it } <= 2) {
+                    Toast.makeText(this, R.string.severity_min_unlocked, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                state.severityLocks[i] = wantLock
+                refreshAll()
+            }
+        }
+
+        // Slider drag handlers — redistribute on every progress change (live preview).
+        for (i in 0..3) {
+            seeks[i].setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    val delta = progress - state.severityGaps[i]
+                    if (delta == 0) return
+                    CorrectionState.redistributeGaps(
+                        state.severityGaps, state.severityLocks,
+                        changedIdx = i, delta = delta)
+                    refreshAll()
+                    glView.requestRender()
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.severity_dialog_title)
+            .setView(view)
+            .setPositiveButton("Done") { _, _ -> /* state already mutated */ }
+            .setNegativeButton("Cancel") { _, _ ->
+                state.severityGaps = snapGaps
+                state.severityLocks = snapLocks
+                glView.requestRender()
+            }
+            .setOnCancelListener {
+                state.severityGaps = snapGaps
+                state.severityLocks = snapLocks
+                glView.requestRender()
+            }
+            .show()
+    }
+
+    /**
+     * Recompute per-zone-per-channel max severity bucket and push to the renderer.
+     * Called after any zone-list mutation (mask reload, Add, Delete, Split) so the
+     * shader's zoneMaxEffWear uniforms stay in sync. Cheap: 12 zones × bbox scan.
+     */
+    private fun refreshMaxBucketPresent() {
+        val bmp = state.maskBitmap ?: return
+        val out = IntArray(CorrectionState.MAX_ZONES * 3)
+        state.zones.forEachIndexed { idx, zone ->
+            if (idx >= CorrectionState.MAX_ZONES) return@forEachIndexed
+            val mbp = Zones.maxBucketPresent(bmp, zone)
+            out[idx * 3 + 0] = mbp[0]
+            out[idx * 3 + 1] = mbp[1]
+            out[idx * 3 + 2] = mbp[2]
+        }
+        renderer.setMaxBucketPresent(out)
+        glView.requestRender()
     }
 
     // ---------- Save (live commit to /data/burnout/) ----------
@@ -379,6 +497,7 @@ class CalibrateActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btn_save).setOnClickListener { saveLive() }
         findViewById<Button>(R.id.btn_export).setOnClickListener { exportToDownloads() }
+        findViewById<Button>(R.id.btn_tune_severity).setOnClickListener { showSeverityDialog() }
         findViewById<Button>(R.id.btn_zone_del).setOnClickListener { deleteSelectedZone() }
         findViewById<Button>(R.id.btn_zone_split).setOnClickListener { splitSelectedZone() }
         findViewById<Button>(R.id.btn_zone_add).setOnClickListener {
@@ -445,6 +564,7 @@ class CalibrateActivity : AppCompatActivity() {
         updateZoneButtonStates()
         syncSliderToSelectedZone()
         updateStatus()
+        refreshMaxBucketPresent()
     }
 
     private fun splitSelectedZone() {
@@ -469,6 +589,7 @@ class CalibrateActivity : AppCompatActivity() {
         updateZoneButtonStates()
         syncSliderToSelectedZone()
         updateStatus()
+        refreshMaxBucketPresent()
     }
 
     private fun updateZoneButtonStates() {
@@ -532,6 +653,7 @@ class CalibrateActivity : AppCompatActivity() {
         syncSliderToSelectedZone()
         updateStatus()
         updateZoneButtonStates()
+        refreshMaxBucketPresent()
     }
 
     private fun startAddMode() {

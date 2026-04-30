@@ -254,6 +254,42 @@ object Zones {
         Zone(src.x0, src.y0, src.x1, src.y1, parent.dim,
             floatArrayOf(parent.channels[0], parent.channels[1], parent.channels[2]))
 
+    /**
+     * Per-channel max severity bucket present in a zone's marked pixels, sampled within the zone bbox.
+     * Returns IntArray(3) of bucket indices in 0..4 (0 = no marks in this channel).
+     *
+     * Used at zone-load / Add / Delete / Split time; the result is then combined with sevWearFraction[]
+     * to produce zoneMaxEffWear uniforms for the shader.
+     */
+    fun maxBucketPresent(mask: Bitmap, zone: Zone): IntArray {
+        val w = mask.width; val h = mask.height
+        val x0 = zone.x0.coerceIn(0, w - 1); val x1 = zone.x1.coerceIn(0, w - 1)
+        val y0 = zone.y0.coerceIn(0, h - 1); val y1 = zone.y1.coerceIn(0, h - 1)
+        val rw = x1 - x0 + 1
+        val rh = y1 - y0 + 1
+        val px = IntArray(rw * rh)
+        mask.getPixels(px, 0, rw, x0, y0, rw, rh)
+        var maxR = 0; var maxG = 0; var maxB = 0
+        for (p in px) {
+            val r = (p shr 16) and 0xFF
+            val g = (p shr  8) and 0xFF
+            val b =  p         and 0xFF
+            if (r > maxR) maxR = r
+            if (g > maxG) maxG = g
+            if (b > maxB) maxB = b
+        }
+        return intArrayOf(bucketOf(maxR), bucketOf(maxG), bucketOf(maxB))
+    }
+
+    private fun bucketOf(wearValue: Int): Int =
+        when {
+            wearValue <= 0   -> 0
+            wearValue < 95   -> 1   // 63 → bucket 1; halfway between 63 and 127 = 95.
+            wearValue < 159  -> 2   // 127 → bucket 2; halfway 127↔191 = 159.
+            wearValue < 223  -> 3   // 191 → bucket 3; halfway 191↔255 = 223.
+            else             -> 4
+        }
+
     fun rectBboxFromMarks(
         mask: Bitmap,
         rx0: Int, ry0: Int, rx1: Int, ry1: Int,

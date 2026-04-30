@@ -163,10 +163,10 @@ index 26fab27b4a..9507498e3f 100644
  
 diff --git a/libs/renderengine/skia/filters/BurnoutFilter.cpp b/libs/renderengine/skia/filters/BurnoutFilter.cpp
 new file mode 100644
-index 0000000000..4ed7cc0bf4
+index 0000000000..a0344f09c4
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/BurnoutFilter.cpp
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,471 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -225,6 +225,8 @@ index 0000000000..4ed7cc0bf4
 +uniform float4 zones[12];
 +uniform half zoneDims[12];
 +uniform half3 zoneChannels[12];      // RGB has-wear flag per zone (0 or 1)
++uniform half sevWearFraction[5];     // cumulative bucket-to-wear-fraction lookup
++uniform half3 zoneMaxEffWear[12];    // per-zone-per-channel max effective wear (0..1)
 +uniform int correctionOn;
 +
 +half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
@@ -247,28 +249,43 @@ index 0000000000..4ed7cc0bf4
 +    half3 lin = srgb2lin(src.rgb);
 +    half3 outLin = lin;
 +    if (correctionOn == 1) {
-+        bool marked = max(wearRaw.r, max(wearRaw.g, wearRaw.b)) > half(0.001);
-+        if (!marked) {
-+            float zw = 0.0;
-+            half zd = 0.0;
-+            half3 zoneCh = half3(0.0);   // dominant zone's channel mask
-+            for (int i = 0; i < 12; i++) {
-+                if (i >= zoneCount) { break; }
-+                float w = zoneWeight(uv, zones[i], falloffRadiusPx);
-+                if (w > zw) { zw = w; zd = zoneDims[i]; zoneCh = zoneChannels[i]; }
-+                else if (w == zw && zoneDims[i] > zd) { zd = zoneDims[i]; zoneCh = zoneChannels[i]; }
++        // Per-pixel effective wear via sevWearFraction lookup. Round wearRaw*4 to nearest
++        // bucket index 0..4. Unmarked pixels (bucket 0) get effWear=0 → factor=1 → legacy dim.
++        int3 bucket = int3(round(wearRaw * 4.0));
++        bucket = clamp(bucket, int3(0), int3(4));
++        half3 effWear = half3(
++            sevWearFraction[bucket.r],
++            sevWearFraction[bucket.g],
++            sevWearFraction[bucket.b]
++        );
++
++        float zw = 0.0;
++        half zd = 0.0;
++        half3 zoneCh = half3(0.0);
++        half3 zoneMaxEff = half3(0.0);
++        for (int i = 0; i < 12; i++) {
++            if (i >= zoneCount) { break; }
++            float w = zoneWeight(uv, zones[i], falloffRadiusPx);
++            if (w > zw || (w == zw && zoneDims[i] > zd)) {
++                zw = w; zd = zoneDims[i];
++                zoneCh = zoneChannels[i];
++                zoneMaxEff = zoneMaxEffWear[i];
 +            }
-+            // Per-channel dim assembled as two independent terms (matches app shader):
-+            //   - zone term: dominant zone's painted channels mix from globalDim → zd as zw goes 0→1.
-+            //   - baseline term: channels NOT in the dominant zone keep their per-channel globalDim.
-+            // No global-wear gate on the baseline term — sliders are pure manual controls; a user can
-+            // intentionally dim a clean (unworn) channel to compensate the panel for dimming on others.
-+            half3 zoneDimV = mix(globalDim, half3(zd), half(zw));
-+            half3 nonZoneCh = half3(1.0) - zoneCh;
-+            half3 dimV = clamp(zoneCh * zoneDimV + nonZoneCh * globalDim,
-+                               half3(0.0), half3(0.99));
-+            outLin = lin * (half3(1.0) - dimV);
 +        }
++
++        // Severity factor: 1.0 for unmarked (or zoneMaxEff=0 fallback), 0.0 at zone-max-wear,
++        // linear in between. Applied only to the zone term — baseline channels stay at globalDim.
++        half3 factor = clamp(
++            (zoneMaxEff - effWear) / max(zoneMaxEff, half3(1e-6)),
++            half3(0.0), half3(1.0));
++        factor = mix(half3(1.0), factor, step(half3(1e-6), zoneMaxEff));
++
++        half3 zoneDimV = mix(globalDim, half3(zd), half(zw));
++        half3 nonZoneCh = half3(1.0) - zoneCh;
++        half3 dimV = clamp(
++            zoneCh * zoneDimV * factor + nonZoneCh * globalDim,
++            half3(0.0), half3(0.99));
++        outLin = lin * (half3(1.0) - dimV);
 +    }
 +    outLin = clamp(outLin, half3(0.0), half3(1.0));
 +    return half4(lin2srgb(outLin), src.a);
@@ -422,6 +439,28 @@ index 0000000000..4ed7cc0bf4
 +    mState.maxWearG = mw.get("g", 0.0).asFloat();
 +    mState.maxWearB = mw.get("b", 0.0).asFloat();
 +
++    // severity_gaps: optional 4-element array, sum=100. Missing/invalid → keep linear default.
++    const Json::Value& sg = root["severity_gaps"];
++    if (sg.isArray() && sg.size() == 4u) {
++        int gaps[4];
++        bool ok = true;
++        int sum = 0;
++        for (int i = 0; i < 4; ++i) {
++            gaps[i] = sg[static_cast<unsigned>(i)].asInt();
++            if (gaps[i] < 0 || gaps[i] > 100) ok = false;
++            sum += gaps[i];
++        }
++        if (ok && sum == 100) {
++            int cum = 0;
++            mState.sevWearFraction[0] = 0.0f;
++            for (int i = 0; i < 4; ++i) {
++                cum += gaps[i];
++                mState.sevWearFraction[i + 1] = static_cast<float>(cum) / 100.0f;
++            }
++            mState.sevWearFraction[4] = 1.0f;  // pin against rounding error
++        }
++    }
++
 +    const Json::Value& zones = root["zones"];
 +    if (!zones.isArray()) {
 +        ALOGW("BurnoutFilter: %s zones field is not an array", path.c_str());
@@ -459,6 +498,61 @@ index 0000000000..4ed7cc0bf4
 +    for (int i = 0; i < mState.zoneCount; ++i) {
 +        loadZone(zones[i], &mState.zones[i], &mState.zoneDims[i], mState.zoneChannels[i]);
 +    }
++
++    // Compute per-zone-per-channel max bucket present + zoneMaxEffWear lookup.
++    // Bucket boundaries midway between encoded mask values 63/127/191/255.
++    auto bucketOf = [](int v) -> int {
++        if (v <= 0)   return 0;
++        if (v < 95)   return 1;
++        if (v < 159)  return 2;
++        if (v < 223)  return 3;
++        return 4;
++    };
++    const int maskW = mState.maskSizePx.width();
++    const int maskH = mState.maskSizePx.height();
++    for (int zi = 0; zi < BurnoutState::kMaxZones; ++zi) {
++        // default to no-wear for unused slots; shader's step(1e-6) gives factor=1 fallback
++        for (int c = 0; c < 3; ++c) {
++            mState.maxBucketPresent[zi][c] = 0;
++            mState.zoneMaxEffWear[zi][c] = 0.0f;
++        }
++    }
++    for (int zi = 0; zi < mState.zoneCount; ++zi) {
++        const SkRect& bbox = mState.zones[zi];
++        const int x0 = std::clamp(static_cast<int>(bbox.left()  * maskW), 0, maskW - 1);
++        const int y0 = std::clamp(static_cast<int>(bbox.top()   * maskH), 0, maskH - 1);
++        const int x1 = std::clamp(static_cast<int>(bbox.right() * maskW), 0, maskW - 1);
++        const int y1 = std::clamp(static_cast<int>(bbox.bottom()* maskH), 0, maskH - 1);
++        const int rw = x1 - x0 + 1;
++        const int rh = y1 - y0 + 1;
++        if (rw <= 0 || rh <= 0) continue;
++
++        SkImageInfo info = SkImageInfo::Make(rw, rh, kRGBA_8888_SkColorType,
++                                             kUnpremul_SkAlphaType);
++        auto buf = std::make_unique<uint8_t[]>(static_cast<size_t>(rw) * rh * 4);
++        if (!mMask->readPixels(/*context*/nullptr, info, buf.get(),
++                               static_cast<size_t>(rw) * 4, x0, y0)) {
++            ALOGW("BurnoutFilter: zone %d readPixels failed; using factor=1 fallback", zi);
++            continue;
++        }
++        int maxR = 0, maxG = 0, maxB = 0;
++        for (int i = 0; i < rw * rh; ++i) {
++            const int r = buf[i * 4 + 0];
++            const int g = buf[i * 4 + 1];
++            const int b = buf[i * 4 + 2];
++            if (r > maxR) maxR = r;
++            if (g > maxG) maxG = g;
++            if (b > maxB) maxB = b;
++        }
++        mState.maxBucketPresent[zi][0] = bucketOf(maxR);
++        mState.maxBucketPresent[zi][1] = bucketOf(maxG);
++        mState.maxBucketPresent[zi][2] = bucketOf(maxB);
++        for (int c = 0; c < 3; ++c) {
++            mState.zoneMaxEffWear[zi][c] =
++                mState.sevWearFraction[mState.maxBucketPresent[zi][c]];
++        }
++    }
++
 +    return true;
 +}
 +
@@ -512,6 +606,18 @@ index 0000000000..4ed7cc0bf4
 +    builder.uniform("zones").set(zoneUniforms, BurnoutState::kMaxZones);
 +    builder.uniform("zoneDims").set(mState.zoneDims, BurnoutState::kMaxZones);
 +    builder.uniform("zoneChannels").set(zoneChannelsUniforms, BurnoutState::kMaxZones);
++
++    // Severity-aware uniforms (Phase 9). sevWearFraction maps bucket → wear fraction;
++    // zoneMaxEffWear is the per-zone-per-channel ceiling derived at mask-load time.
++    builder.uniform("sevWearFraction").set(mState.sevWearFraction, 5);
++    SkV3 zoneMaxEffUniforms[BurnoutState::kMaxZones];
++    for (int i = 0; i < BurnoutState::kMaxZones; ++i) {
++        zoneMaxEffUniforms[i] = SkV3{mState.zoneMaxEffWear[i][0],
++                                     mState.zoneMaxEffWear[i][1],
++                                     mState.zoneMaxEffWear[i][2]};
++    }
++    builder.uniform("zoneMaxEffWear").set(zoneMaxEffUniforms, BurnoutState::kMaxZones);
++
 +    builder.uniform("correctionOn") = correctionOn ? 1 : 0;
 +
 +    auto shader = builder.makeShader();
@@ -534,10 +640,10 @@ index 0000000000..4ed7cc0bf4
 +}  // namespace android
 diff --git a/libs/renderengine/skia/filters/BurnoutFilter.h b/libs/renderengine/skia/filters/BurnoutFilter.h
 new file mode 100644
-index 0000000000..b7b9d56170
+index 0000000000..9969e5f7c9
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/BurnoutFilter.h
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,101 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -586,6 +692,13 @@ index 0000000000..b7b9d56170
 +    float  maxWearG = 0.f;
 +    float  maxWearB = 0.f;
 +    SkISize maskSizePx = SkISize::MakeEmpty();
++    // Severity-aware shading (Phase 9). 4 inter-bucket gaps in zones.json's `severity_gaps`
++    // array (sum=100) derive the cumulative wear-fraction lookup. Default 25/25/25/25 → linear.
++    float  sevWearFraction[5] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
++    // Per-zone-per-channel max bucket present (0..4), computed from the loaded mask at
++    // reload time. Combined with sevWearFraction to produce zoneMaxEffWear uniforms.
++    int    maxBucketPresent[kMaxZones][3] = {};
++    float  zoneMaxEffWear[kMaxZones][3] = {};
 +};
 +
 +/**
@@ -634,10 +747,10 @@ index 0000000000..b7b9d56170
 +}  // namespace android
 diff --git a/libs/renderengine/skia/filters/burnout_shader.sksl b/libs/renderengine/skia/filters/burnout_shader.sksl
 new file mode 100644
-index 0000000000..59f5521893
+index 0000000000..687fed5f8c
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/burnout_shader.sksl
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,102 @@
 +// SF post-pass burn-out correction. Documentation copy — the runtime uses the
 +// embedded literal in BurnoutFilter.cpp (kBurnoutSkSL); this file mirrors it for
 +// offline tooling (skslc, syntax-highlight editors) and review.
@@ -667,6 +780,8 @@ index 0000000000..59f5521893
 +uniform float4 zones[12];             // x0, y0, x1, y1 in UV [0,1]
 +uniform half  zoneDims[12];
 +uniform half3 zoneChannels[12];       // RGB has-wear flag per zone (0 or 1). Default {1,1,1} for legacy.
++uniform half  sevWearFraction[5];     // cumulative bucket-to-wear-fraction lookup [0, c1, c2, c3, 1]
++uniform half3 zoneMaxEffWear[12];     // per-zone-per-channel max effective wear (0..1)
 +uniform int correctionOn;             // 0 or 1 — short-circuit when off
 +
 +half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
@@ -696,32 +811,43 @@ index 0000000000..59f5521893
 +    half3 outLin = lin;
 +
 +    if (correctionOn == 1) {
-+        bool marked = max(wearRaw.r, max(wearRaw.g, wearRaw.b)) > half(0.001);
-+        if (!marked) {
-+            // Pick the dominant zone (highest weight) and capture its channel mask + dim.
-+            // weight=1 inside bbox  -> dim = zone.dim on its painted channels
-+            // weight=0 outside all  -> dim = per-channel globalDim everywhere
-+            // 0<weight<1 in falloff -> smooth ramp between the two on painted channels;
-+            //                          non-painted channels keep their per-channel globalDim
-+            float zw = 0.0;
-+            half zd = 0.0;
-+            half3 zoneCh = half3(0.0);   // dominant zone's channel mask
-+            for (int i = 0; i < 12; i++) {
-+                if (i >= zoneCount) { break; }
-+                float w = zoneWeight(uv, zones[i], falloffRadiusPx);
-+                if (w > zw) { zw = w; zd = zoneDims[i]; zoneCh = zoneChannels[i]; }
-+                else if (w == zw && zoneDims[i] > zd) { zd = zoneDims[i]; zoneCh = zoneChannels[i]; }
++        // Per-pixel effective wear via sevWearFraction lookup. Round wearRaw*4 to nearest
++        // bucket index 0..4. Unmarked pixels (bucket 0) get effWear=0 → factor=1 → legacy dim.
++        int3 bucket = int3(round(wearRaw * 4.0));
++        bucket = clamp(bucket, int3(0), int3(4));
++        half3 effWear = half3(
++            sevWearFraction[bucket.r],
++            sevWearFraction[bucket.g],
++            sevWearFraction[bucket.b]
++        );
++
++        float zw = 0.0;
++        half zd = 0.0;
++        half3 zoneCh = half3(0.0);
++        half3 zoneMaxEff = half3(0.0);
++        for (int i = 0; i < 12; i++) {
++            if (i >= zoneCount) { break; }
++            float w = zoneWeight(uv, zones[i], falloffRadiusPx);
++            if (w > zw || (w == zw && zoneDims[i] > zd)) {
++                zw = w; zd = zoneDims[i];
++                zoneCh = zoneChannels[i];
++                zoneMaxEff = zoneMaxEffWear[i];
 +            }
-+            // Per-channel dim assembled as two independent terms:
-+            //   - zone term: dominant zone's painted channels mix from globalDim → zd as zw goes 0→1.
-+            //   - baseline term: channels NOT in the dominant zone keep their per-channel globalDim.
-+            // No global-wear gate on the baseline term — sliders are pure manual controls.
-+            half3 zoneDimV = mix(globalDim, half3(zd), half(zw));
-+            half3 nonZoneCh = half3(1.0) - zoneCh;
-+            half3 dimV = clamp(zoneCh * zoneDimV + nonZoneCh * globalDim,
-+                               half3(0.0), half3(0.99));
-+            outLin = lin * (half3(1.0) - dimV);
 +        }
++
++        // Severity factor: 1.0 for unmarked (or zoneMaxEff=0 fallback), 0.0 at zone-max-wear,
++        // linear in between. Applied only to the zone term — baseline channels stay at globalDim.
++        half3 factor = clamp(
++            (zoneMaxEff - effWear) / max(zoneMaxEff, half3(1e-6)),
++            half3(0.0), half3(1.0));
++        factor = mix(half3(1.0), factor, step(half3(1e-6), zoneMaxEff));
++
++        half3 zoneDimV = mix(globalDim, half3(zd), half(zw));
++        half3 nonZoneCh = half3(1.0) - zoneCh;
++        half3 dimV = clamp(
++            zoneCh * zoneDimV * factor + nonZoneCh * globalDim,
++            half3(0.0), half3(0.99));
++        outLin = lin * (half3(1.0) - dimV);
 +    }
 +
 +    outLin = clamp(outLin, half3(0.0), half3(1.0));
