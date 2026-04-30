@@ -6,11 +6,33 @@ Connects to the Burn-out app's Calibrate activity over `adb forward` (TCP → Un
 
 ## Setup
 
+End-user (just want to run the editor from source):
+
 ```
 pip install -r requirements.txt
 ```
 
+Developer (need PyInstaller for local bundle builds):
+
+```
+pip install -r requirements-dev.txt
+```
+
 PyQt5 may also be installable from your distro's package manager (`apt install python3-pyqt5` on Debian/Ubuntu, `brew install pyqt@5` on macOS).
+
+## Releases
+
+Pre-built bundles are attached to each tagged release on the [GitHub Releases page](https://github.com/REPLACE-WITH-REPO/releases) (URL fixed up at first push):
+
+| OS | Asset | Notes |
+|---|---|---|
+| macOS | `burnout-editor-macos.dmg` | First-launch Gatekeeper warning expected (unsigned). Right-click → Open to bypass. |
+| Windows | `burnout-editor-windows.exe` | First-launch SmartScreen warning expected (unsigned). Click "More info" → "Run anyway". |
+| Linux | `burnout-editor-linux-x86_64.tar.gz` | Untar, `chmod +x burnout-editor`, run. |
+
+Bundles are produced by `.github/workflows/editor-bundles.yml` on tag push. Code-signing is deferred — see spec §9.5 (or upcoming USER-GUIDE.md) for the full rationale.
+
+To build locally on Linux: `bash scripts/build-editor-bundle.sh` from the repo root.
 
 ## Usage
 
@@ -55,4 +77,3 @@ The editor pushes one pixel-edit per active channel of the selected zone. A G-on
 
 - **Zone management** (Add / Delete / Split): use the Burn-out app's Calibrate UI on the phone.
 - **Zone-level params** (per-zone dim, falloff radius, per-channel global dim): tune via Calibrate's sliders.
-- **Drag-shapes** (circle, triangle): coming in a later phase.
