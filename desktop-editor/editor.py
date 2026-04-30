@@ -27,12 +27,50 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QSpinBox, QGraphicsView, QGraphicsScene, QRubberBand, QListWidget, QListWidgetItem,
-    QSplitter,
+    QSplitter, QButtonGroup,
 )
+
+import shapes
 
 
 HOST = "127.0.0.1"
 PORT = 8765
+
+
+# Display LUT: top-of-bucket mask values (63/127/191/255) are dim against any
+# background. Lift them toward white while preserving severity ordering:
+# 0→0 (clear), 63→159, 127→191, 191→223, 255→255. Mask data on phone is
+# untouched; this is purely a render-side remap so the user can see marks.
+_DISPLAY_LUT = bytes([0] + [min(255, 128 + i // 2) for i in range(1, 256)])
+
+
+# Triangle orientation labels in CW order from "point up" (matches shapes.rasterize_triangle).
+_ORIENT_LABELS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def _brighten_pixmap(pm: QPixmap, white_bg: bool = False) -> QPixmap:
+    """Render the bbox crop with brightened marks on a chosen background.
+
+    Unmarked pixels (RGB == 0,0,0) become the bbox background color: black if
+    white_bg is False, white if True. Marked pixels go through the LUT.
+    """
+    img = pm.toImage().convertToFormat(QImage.Format_ARGB32)
+    w, h = img.width(), img.height()
+    n = w * h * 4
+    ptr = img.bits()
+    ptr.setsize(n)
+    mv = memoryview(ptr)
+    bg = 255 if white_bg else 0
+    # Format_ARGB32 on little-endian is BGRA byte order; alpha (i+3) is left untouched.
+    for i in range(0, n, 4):
+        b = mv[i]; g = mv[i + 1]; r = mv[i + 2]
+        if b == 0 and g == 0 and r == 0:
+            mv[i] = bg; mv[i + 1] = bg; mv[i + 2] = bg
+        else:
+            mv[i]     = _DISPLAY_LUT[b]
+            mv[i + 1] = _DISPLAY_LUT[g]
+            mv[i + 2] = _DISPLAY_LUT[r]
+    return QPixmap.fromImage(img)
 
 
 class MaskClient:
@@ -99,7 +137,10 @@ class ZoneView(QGraphicsView):
         self._zone = None
         self._fit_done = False
         self.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        # Surrounding scene background is a boring neutral; user can toggle the
+        # bbox interior between black and white via set_bbox_bg_dark.
         self.setBackgroundBrush(QBrush(QColor(40, 40, 40)))
+        self._bbox_bg_dark = True
         self.setMouseTracking(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -118,7 +159,7 @@ class ZoneView(QGraphicsView):
         self._zone = zone
         x0, y0, x1, y1 = zone["x0"], zone["y0"], zone["x1"], zone["y1"]
         w = x1 - x0 + 1; h = y1 - y0 + 1
-        cropped = full_pixmap.copy(x0, y0, w, h)
+        cropped = _brighten_pixmap(full_pixmap.copy(x0, y0, w, h), white_bg=not self._bbox_bg_dark)
         self._scene.clear()
         self._scene.addPixmap(cropped)
         self.setSceneRect(QRectF(0, 0, w, h))
@@ -128,6 +169,9 @@ class ZoneView(QGraphicsView):
 
     def fit(self):
         self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def set_bbox_bg_dark(self, dark: bool):
+        self._bbox_bg_dark = dark
 
     def wheelEvent(self, ev: QWheelEvent):
         delta = ev.angleDelta().y() / 120
@@ -208,6 +252,8 @@ class MainWindow(QMainWindow):
         self._mask_image: QImage | None = None
         self._mask_pixmap: QPixmap | None = None
         self._selected_zone_idx = -1
+        self._current_shape = 0  # 0=rect, 1=circle, 2=triangle
+        self._tri_orient = 0     # 0..7, CW from "point up"
 
         self._build_ui()
         self.refresh()
@@ -227,7 +273,26 @@ class MainWindow(QMainWindow):
         self.spin_severity.setFixedWidth(60)
         bar.addWidget(self.spin_severity)
         bar.addSpacing(12)
-        bar.addWidget(QLabel("(L-click/drag = mark at severity • R-click/drag = clear • wheel = zoom)"))
+        bar.addWidget(QLabel("shape:"))
+        self.shape_group = QButtonGroup(self)
+        self.shape_group.setExclusive(True)
+        self.btn_rect = QPushButton("Rect"); self.btn_rect.setCheckable(True); self.btn_rect.setChecked(True)
+        self.btn_circle = QPushButton("Circle"); self.btn_circle.setCheckable(True)
+        self.btn_tri = QPushButton("Triangle"); self.btn_tri.setCheckable(True)
+        for i, b in enumerate((self.btn_rect, self.btn_circle, self.btn_tri)):
+            self.shape_group.addButton(b, i)
+            b.setFixedWidth(70)
+            bar.addWidget(b)
+        self.shape_group.idClicked.connect(self._on_shape_changed)
+        # Triangle rotation controls — disabled until Triangle is selected.
+        self.btn_rot_ccw = QPushButton("◀"); self.btn_rot_ccw.setFixedWidth(28); self.btn_rot_ccw.setEnabled(False)
+        self.btn_rot_ccw.clicked.connect(lambda: self._rotate_triangle(-1))
+        self.lbl_orient = QLabel("(N)"); self.lbl_orient.setFixedWidth(40); self.lbl_orient.setEnabled(False)
+        self.btn_rot_cw = QPushButton("▶"); self.btn_rot_cw.setFixedWidth(28); self.btn_rot_cw.setEnabled(False)
+        self.btn_rot_cw.clicked.connect(lambda: self._rotate_triangle(1))
+        bar.addWidget(self.btn_rot_ccw); bar.addWidget(self.lbl_orient); bar.addWidget(self.btn_rot_cw)
+        bar.addSpacing(12)
+        bar.addWidget(QLabel("(L-drag = shape fill at severity • R-drag = clear • L/R-click = single px • wheel = zoom)"))
         bar.addStretch(1)
         outer.addLayout(bar)
 
@@ -248,6 +313,9 @@ class MainWindow(QMainWindow):
         rh = QHBoxLayout()
         self.zone_label = QLabel("<b>(no zone selected)</b>")
         rh.addWidget(self.zone_label); rh.addStretch(1)
+        self.btn_bg = QPushButton("BG: black"); self.btn_bg.setFixedWidth(90)
+        self.btn_bg.clicked.connect(self._toggle_bg)
+        rh.addWidget(self.btn_bg)
         btn_fit = QPushButton("Fit"); btn_fit.setFixedWidth(50)
         btn_fit.clicked.connect(lambda: self.zone_view.fit())
         rh.addWidget(btn_fit)
@@ -263,6 +331,26 @@ class MainWindow(QMainWindow):
 
         self.status = self.statusBar()
         self.status.showMessage("Connecting...")
+
+    def _toggle_bg(self):
+        new_dark = not self.zone_view._bbox_bg_dark
+        self.zone_view.set_bbox_bg_dark(new_dark)
+        self.btn_bg.setText("BG: black" if new_dark else "BG: white")
+        # Re-render current zone so the new bbox bg color shows.
+        z = self._selected_zone()
+        if z is not None and self._mask_pixmap is not None:
+            self.zone_view.show_zone(self._mask_pixmap, z)
+
+    def _on_shape_changed(self, shape_id: int):
+        self._current_shape = shape_id  # 0=rect, 1=circle, 2=triangle
+        is_tri = shape_id == 2
+        self.btn_rot_ccw.setEnabled(is_tri)
+        self.btn_rot_cw.setEnabled(is_tri)
+        self.lbl_orient.setEnabled(is_tri)
+
+    def _rotate_triangle(self, delta: int):
+        self._tri_orient = (self._tri_orient + delta) % 8
+        self.lbl_orient.setText(f"({_ORIENT_LABELS[self._tri_orient]})")
 
     # --- network ---
 
@@ -363,20 +451,31 @@ class MainWindow(QMainWindow):
         if not active:
             self.status.showMessage("Selected zone has no active channels — nothing to push")
             return
-        n_pixels = (x1 - x0 + 1) * (y1 - y0 + 1)
+        if self._current_shape == 0:
+            pixels = shapes.rasterize_rect(x0, y0, x1, y1)
+            shape_name = "Rect"
+        elif self._current_shape == 1:
+            pixels = shapes.rasterize_circle(x0, y0, x1, y1)
+            shape_name = "Circle"
+        else:
+            pixels = shapes.rasterize_triangle(x0, y0, x1, y1, self._tri_orient)
+            shape_name = f"Triangle ({_ORIENT_LABELS[self._tri_orient]})"
+        if not pixels:
+            return
         edits = [
             {"x": px, "y": py, "channel": ch, "severity": sev}
             for ch in active
-            for py in range(y0, y1 + 1)
-            for px in range(x0, x1 + 1)
+            for (px, py) in pixels
         ]
         try:
             self.client.toggle_pixels(edits)
         except Exception as e:
-            self.status.showMessage(f"Area push failed ({n_pixels}px): {e}")
+            self.status.showMessage(f"{shape_name} push failed ({len(pixels)}px): {e}")
             return
         action = "cleared" if sev == 0 else f"marked sev={sev}"
-        self.status.showMessage(f"Area {x0},{y0}–{x1},{y1} ({n_pixels}px) → {action}")
+        self.status.showMessage(
+            f"{shape_name} {x0},{y0}-{x1},{y1} ({len(pixels)}px) → {action}"
+        )
         self.refresh()
 
     def save(self):
