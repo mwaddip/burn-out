@@ -138,10 +138,14 @@ class MarkView @JvmOverloads constructor(
             canvas.drawBitmap(img, imageMatrix, imagePaint)
         }
 
-        // Marked pixels in the active channel rendered as black (simulating burn-in look).
+        // Marked pixels in the active channel rendered as black, with alpha proportional
+        // to the per-pixel byte value — visually confirms severity (sev-1 ~25% black,
+        // sev-4 fully black). Helps spot per-pixel severity in stamped images where the
+        // source has variable intensity per channel.
         // Hidden when A/B hold-to-toggle is active (spec §4.1).
         if (!hidePaintedOverlay && activeChannel.isMarkingChannel) {
             mask.forEachMarked(activeChannel) { x, y ->
+                markPaint.alpha = mask.rawByteAt(x, y, activeChannel)
                 canvas.drawRect(x.toFloat(), y.toFloat(), (x + 1).toFloat(), (y + 1).toFloat(), markPaint)
             }
         }

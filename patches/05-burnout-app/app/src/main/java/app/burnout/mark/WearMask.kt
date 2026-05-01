@@ -71,6 +71,22 @@ class WearMask(val width: Int, val height: Int) {
         return (pixels[y * width + x] and 0x00FFFFFF) != 0
     }
 
+    /**
+     * Raw byte value (0..255) at (x, y) for the given channel. Unlike getSeverity(),
+     * this preserves the source intensity without bucketing — used by MarkView to
+     * render mark alpha proportional to per-pixel severity.
+     */
+    fun rawByteAt(x: Int, y: Int, channel: Channel): Int {
+        if (!inBounds(x, y) || channel == Channel.W) return 0
+        val argb = pixels[y * width + x]
+        return when (channel) {
+            Channel.R -> (argb shr 16) and 0xFF
+            Channel.G -> (argb shr 8) and 0xFF
+            Channel.B -> argb and 0xFF
+            Channel.W -> 0
+        }
+    }
+
     fun toPixelArray(): IntArray = pixels.copyOf()
 
     /** Iterate (x, y) coordinates of pixels with non-zero severity in the given channel. */
