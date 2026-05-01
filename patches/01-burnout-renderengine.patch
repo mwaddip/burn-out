@@ -163,10 +163,10 @@ index 26fab27b4a..9507498e3f 100644
  
 diff --git a/libs/renderengine/skia/filters/BurnoutFilter.cpp b/libs/renderengine/skia/filters/BurnoutFilter.cpp
 new file mode 100644
-index 0000000000..a0344f09c4
+index 0000000000..85f5603c61
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/BurnoutFilter.cpp
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,481 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -223,7 +223,7 @@ index 0000000000..a0344f09c4
 +uniform half3 globalDim;             // per-channel baseline (R, G, B)
 +uniform int zoneCount;
 +uniform float4 zones[12];
-+uniform half zoneDims[12];
++uniform half  zoneDims[12];           // per-zone dim
 +uniform half3 zoneChannels[12];      // RGB has-wear flag per zone (0 or 1)
 +uniform half sevWearFraction[5];     // cumulative bucket-to-wear-fraction lookup
 +uniform half3 zoneMaxEffWear[12];    // per-zone-per-channel max effective wear (0..1)
@@ -231,6 +231,18 @@ index 0000000000..a0344f09c4
 +
 +half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
 +half3 lin2srgb(half3 c) { return pow(c, half3(1.0/2.2)); }
++
++// Map a wear value [0..1] to its effective wear via the cumulative sevWearFraction lookup.
++// Uses ternary chain instead of array-indexing-by-runtime-int — SkSL has restrictions on
++// both clamp(int3, ...) and uniform-array indexing by non-constant expressions.
++// Boundaries are midpoints between encoded mask values 0/0.247/0.498/0.749/1.0.
++half lookupSev(half w) {
++    return w < half(0.125) ? sevWearFraction[0]
++         : w < half(0.375) ? sevWearFraction[1]
++         : w < half(0.625) ? sevWearFraction[2]
++         : w < half(0.875) ? sevWearFraction[3]
++         : sevWearFraction[4];
++}
 +
 +float zoneWeight(float2 uv, float4 b, float radiusPx) {
 +    float2 d_uv = max(max(b.xy - uv, uv - b.zw), float2(0.0));
@@ -249,42 +261,40 @@ index 0000000000..a0344f09c4
 +    half3 lin = srgb2lin(src.rgb);
 +    half3 outLin = lin;
 +    if (correctionOn == 1) {
-+        // Per-pixel effective wear via sevWearFraction lookup. Round wearRaw*4 to nearest
-+        // bucket index 0..4. Unmarked pixels (bucket 0) get effWear=0 → factor=1 → legacy dim.
-+        int3 bucket = int3(round(wearRaw * 4.0));
-+        bucket = clamp(bucket, int3(0), int3(4));
++        // Per-pixel effective wear via sevWearFraction lookup (see lookupSev() above).
 +        half3 effWear = half3(
-+            sevWearFraction[bucket.r],
-+            sevWearFraction[bucket.g],
-+            sevWearFraction[bucket.b]
++            lookupSev(wearRaw.r),
++            lookupSev(wearRaw.g),
++            lookupSev(wearRaw.b)
 +        );
 +
-+        float zw = 0.0;
-+        half zd = 0.0;
-+        half3 zoneCh = half3(0.0);
++        // Per-channel max-of-lerp: each output channel picks the strongest dim contribution
++        // among same-channel zones. globalDim is the floor (pixels outside any same-channel
++        // zone). C0 continuous in falloff overlap regions where two same-channel zones' tails
++        // meet — natural smoothing without dim-tie-break artifacts.
++        half3 zoneDimV = globalDim;
 +        half3 zoneMaxEff = half3(0.0);
 +        for (int i = 0; i < 12; i++) {
 +            if (i >= zoneCount) { break; }
 +            float w = zoneWeight(uv, zones[i], falloffRadiusPx);
-+            if (w > zw || (w == zw && zoneDims[i] > zd)) {
-+                zw = w; zd = zoneDims[i];
-+                zoneCh = zoneChannels[i];
-+                zoneMaxEff = zoneMaxEffWear[i];
++            for (int c = 0; c < 3; c++) {
++                if (zoneChannels[i][c] < half(0.5)) { continue; }
++                half candidate = mix(globalDim[c], zoneDims[i], half(w));
++                if (candidate > zoneDimV[c]) {
++                    zoneDimV[c] = candidate;
++                    zoneMaxEff[c] = zoneMaxEffWear[i][c];
++                }
 +            }
 +        }
 +
-+        // Severity factor: 1.0 for unmarked (or zoneMaxEff=0 fallback), 0.0 at zone-max-wear,
-+        // linear in between. Applied only to the zone term — baseline channels stay at globalDim.
++        // Severity factor: 1.0 outside any zone, 0.0 at zone-max-wear, linear in between.
++        // Channels with zoneMaxEff == 0 (no same-channel zone reaches this pixel) fall back to 1.
 +        half3 factor = clamp(
 +            (zoneMaxEff - effWear) / max(zoneMaxEff, half3(1e-6)),
 +            half3(0.0), half3(1.0));
 +        factor = mix(half3(1.0), factor, step(half3(1e-6), zoneMaxEff));
 +
-+        half3 zoneDimV = mix(globalDim, half3(zd), half(zw));
-+        half3 nonZoneCh = half3(1.0) - zoneCh;
-+        half3 dimV = clamp(
-+            zoneCh * zoneDimV * factor + nonZoneCh * globalDim,
-+            half3(0.0), half3(0.99));
++        half3 dimV = clamp(zoneDimV * factor, half3(0.0), half3(0.99));
 +        outLin = lin * (half3(1.0) - dimV);
 +    }
 +    outLin = clamp(outLin, half3(0.0), half3(1.0));
@@ -482,7 +492,7 @@ index 0000000000..a0344f09c4
 +        const float x1 = z["x1"].asFloat();
 +        const float y1 = z["y1"].asFloat();
 +        *outBbox = SkRect::MakeLTRB(x0 / w, y0 / h, x1 / w, y1 / h);  // pixel → UV
-+        *outDim  = z["dim"].asFloat();
++        *outDim = z["dim"].asFloat();
 +        // channels: 3-element array of 0/1. Legacy presets without the field default
 +        // to {1, 1, 1} so all-channels-wearing matches the old global gate.
 +        const Json::Value& ch = z["channels"];
@@ -640,10 +650,10 @@ index 0000000000..a0344f09c4
 +}  // namespace android
 diff --git a/libs/renderengine/skia/filters/BurnoutFilter.h b/libs/renderengine/skia/filters/BurnoutFilter.h
 new file mode 100644
-index 0000000000..9969e5f7c9
+index 0000000000..12a36b5f35
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/BurnoutFilter.h
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,104 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -679,6 +689,9 @@ index 0000000000..9969e5f7c9
 +    static constexpr int kMaxZones = 12;
 +    int    zoneCount = 0;
 +    SkRect zones[kMaxZones] = {};   // each entry default-init = (0,0,0,0); zoneWeight() returns 0 outside
++    // Per-zone single dim. The shader picks one dominant zone per pixel (highest falloff
++    // weight, tie-break by larger dim) and applies its dim through the channels owned by
++    // that zone (zoneChannels[]); other channels stay on globalDim.
 +    float  zoneDims[kMaxZones] = {};
 +    // Per-zone RGB has-wear flag (0.f or 1.f per channel). Loaded from each zone's
 +    // `channels` JSON array; legacy presets without that field default to {1,1,1}
@@ -747,10 +760,10 @@ index 0000000000..9969e5f7c9
 +}  // namespace android
 diff --git a/libs/renderengine/skia/filters/burnout_shader.sksl b/libs/renderengine/skia/filters/burnout_shader.sksl
 new file mode 100644
-index 0000000000..687fed5f8c
+index 0000000000..8669ca7c0c
 --- /dev/null
 +++ b/libs/renderengine/skia/filters/burnout_shader.sksl
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,112 @@
 +// SF post-pass burn-out correction. Documentation copy — the runtime uses the
 +// embedded literal in BurnoutFilter.cpp (kBurnoutSkSL); this file mirrors it for
 +// offline tooling (skslc, syntax-highlight editors) and review.
@@ -778,7 +791,7 @@ index 0000000000..687fed5f8c
 +uniform half3 globalDim;              // per-channel baseline (R, G, B). Independent per channel.
 +uniform int zoneCount;                // 0..12
 +uniform float4 zones[12];             // x0, y0, x1, y1 in UV [0,1]
-+uniform half  zoneDims[12];
++uniform half  zoneDims[12];           // per-zone dim
 +uniform half3 zoneChannels[12];       // RGB has-wear flag per zone (0 or 1). Default {1,1,1} for legacy.
 +uniform half  sevWearFraction[5];     // cumulative bucket-to-wear-fraction lookup [0, c1, c2, c3, 1]
 +uniform half3 zoneMaxEffWear[12];     // per-zone-per-channel max effective wear (0..1)
@@ -786,6 +799,18 @@ index 0000000000..687fed5f8c
 +
 +half3 srgb2lin(half3 c) { return pow(c, half3(2.2)); }
 +half3 lin2srgb(half3 c) { return pow(c, half3(1.0/2.2)); }
++
++// Map a wear value [0..1] to its effective wear via the cumulative sevWearFraction lookup.
++// Uses ternary chain instead of array-indexing-by-runtime-int — SkSL has restrictions on
++// both clamp(int3, ...) and uniform-array indexing by non-constant expressions.
++// Boundaries are midpoints between encoded mask values 0/0.247/0.498/0.749/1.0.
++half lookupSev(half w) {
++    return w < half(0.125) ? sevWearFraction[0]
++         : w < half(0.375) ? sevWearFraction[1]
++         : w < half(0.625) ? sevWearFraction[2]
++         : w < half(0.875) ? sevWearFraction[3]
++         : sevWearFraction[4];
++}
 +
 +// Falloff weight in [0,1]: 1 inside the bbox, linear ramp to 0 over `radiusPx` outside.
 +// uv is in UV space [0,1]; b is the bbox in UV space; radiusPx is in mask-pixel units.
@@ -811,42 +836,40 @@ index 0000000000..687fed5f8c
 +    half3 outLin = lin;
 +
 +    if (correctionOn == 1) {
-+        // Per-pixel effective wear via sevWearFraction lookup. Round wearRaw*4 to nearest
-+        // bucket index 0..4. Unmarked pixels (bucket 0) get effWear=0 → factor=1 → legacy dim.
-+        int3 bucket = int3(round(wearRaw * 4.0));
-+        bucket = clamp(bucket, int3(0), int3(4));
++        // Per-pixel effective wear via sevWearFraction lookup (see lookupSev() above).
 +        half3 effWear = half3(
-+            sevWearFraction[bucket.r],
-+            sevWearFraction[bucket.g],
-+            sevWearFraction[bucket.b]
++            lookupSev(wearRaw.r),
++            lookupSev(wearRaw.g),
++            lookupSev(wearRaw.b)
 +        );
 +
-+        float zw = 0.0;
-+        half zd = 0.0;
-+        half3 zoneCh = half3(0.0);
++        // Per-channel max-of-lerp: each output channel picks the strongest dim contribution
++        // among same-channel zones. globalDim is the floor (pixels outside any same-channel
++        // zone). C0 continuous in falloff overlap regions where two same-channel zones' tails
++        // meet — natural smoothing without dim-tie-break artifacts.
++        half3 zoneDimV = globalDim;
 +        half3 zoneMaxEff = half3(0.0);
 +        for (int i = 0; i < 12; i++) {
 +            if (i >= zoneCount) { break; }
 +            float w = zoneWeight(uv, zones[i], falloffRadiusPx);
-+            if (w > zw || (w == zw && zoneDims[i] > zd)) {
-+                zw = w; zd = zoneDims[i];
-+                zoneCh = zoneChannels[i];
-+                zoneMaxEff = zoneMaxEffWear[i];
++            for (int c = 0; c < 3; c++) {
++                if (zoneChannels[i][c] < half(0.5)) { continue; }
++                half candidate = mix(globalDim[c], zoneDims[i], half(w));
++                if (candidate > zoneDimV[c]) {
++                    zoneDimV[c] = candidate;
++                    zoneMaxEff[c] = zoneMaxEffWear[i][c];
++                }
 +            }
 +        }
 +
-+        // Severity factor: 1.0 for unmarked (or zoneMaxEff=0 fallback), 0.0 at zone-max-wear,
-+        // linear in between. Applied only to the zone term — baseline channels stay at globalDim.
++        // Severity factor: 1.0 outside any zone, 0.0 at zone-max-wear, linear in between.
++        // Channels with zoneMaxEff == 0 (no same-channel zone reaches this pixel) fall back to 1.
 +        half3 factor = clamp(
 +            (zoneMaxEff - effWear) / max(zoneMaxEff, half3(1e-6)),
 +            half3(0.0), half3(1.0));
 +        factor = mix(half3(1.0), factor, step(half3(1e-6), zoneMaxEff));
 +
-+        half3 zoneDimV = mix(globalDim, half3(zd), half(zw));
-+        half3 nonZoneCh = half3(1.0) - zoneCh;
-+        half3 dimV = clamp(
-+            zoneCh * zoneDimV * factor + nonZoneCh * globalDim,
-+            half3(0.0), half3(0.99));
++        half3 dimV = clamp(zoneDimV * factor, half3(0.0), half3(0.99));
 +        outLin = lin * (half3(1.0) - dimV);
 +    }
 +
