@@ -13,8 +13,10 @@ android {
         // MaskCodecTest. App still runs on Android 16+. Established gotcha — see CLAUDE.md.
         minSdk = 35
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.3-mark"
+        // Dev-install builds need versionCode > the baked-in /system/app/Burnout APK's
+        // versionCode (currently 36 from the Soong build) so `adb install -r` can supersede it.
+        versionCode = 100
+        versionName = "0.4-per-channel-zones"
     }
 
     compileOptions {
