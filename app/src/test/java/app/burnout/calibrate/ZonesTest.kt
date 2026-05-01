@@ -124,7 +124,8 @@ class ZonesTest {
         // Paint a green blob OUTSIDE the rectangle below.
         for (y in 5..15) for (x in 5..15) bmp.setPixel(x, y, Color.GREEN)
         val gd = floatArrayOf(0.08f, 0.08f, 0.08f)
-        val zone = Zones.rectBboxFromMarks(bmp, 100, 100, 150, 150, gd)
+        val zone = Zones.rectBboxFromMarks(bmp, 100, 100, 150, 150, gd,
+            activeChannel = 1, existingZones = emptyList())
         assertNull("rectangle with no marks must return null", zone)
     }
 
@@ -135,7 +136,8 @@ class ZonesTest {
         for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
         // User selects a generous rectangle around it.
         val gd = floatArrayOf(0.10f, 0.20f, 0.30f)
-        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 100, 100, gd)
+        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 100, 100, gd,
+            activeChannel = 1, existingZones = emptyList())
         assertNotNull(zone)
         zone!!
         // Tight bbox 50..70 + 10px pad → 40..80.
@@ -145,29 +147,63 @@ class ZonesTest {
         assertEquals(0f, zone.channels[0], 0.001f)
         assertEquals(1f, zone.channels[1], 0.001f)
         assertEquals(0f, zone.channels[2], 0.001f)
-        // Initial dim = globalDim[G] since only G is present.
+        // Initial dim = globalDim[G].
         assertEquals(0.20f, zone.dim, 0.001f)
     }
 
     @Test
-    fun rectBboxFromMarks_multichannel_zone_has_combined_channel_mask() {
+    fun rectBboxFromMarks_only_active_channel_paint_counts() {
         val bmp = blank(200, 200)
-        // R blob at (50..60), G blob at (62..72), both within the user's rectangle.
-        for (y in 50..60) for (x in 50..60) bmp.setPixel(x, y, Color.RED)
-        for (y in 62..72) for (x in 62..72) bmp.setPixel(x, y, Color.GREEN)
-        val gd = floatArrayOf(0.10f, 0.30f, 0.50f)
-        val zone = Zones.rectBboxFromMarks(bmp, 40, 40, 90, 90, gd)
-        assertNotNull(zone)
-        zone!!
-        // Encloses both blobs: 50..72 + 10px pad → 40..82.
+        // R blob at (50..70, 50..70), G blob at (100..120, 100..120). Rect covers both.
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.RED)
+        for (y in 100..120) for (x in 100..120) bmp.setPixel(x, y, Color.GREEN)
+        val gd = floatArrayOf(0.10f, 0.20f, 0.30f)
+        // activeChannel = R (0): bbox should fit only R blob, ignore G.
+        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 150, 150, gd,
+            activeChannel = 0, existingZones = emptyList())
+        assertNotNull(zone); zone!!
+        // R blob 50..70 + 10px pad → 40..80
         assertEquals(40, zone.x0); assertEquals(40, zone.y0)
-        assertEquals(82, zone.x1); assertEquals(82, zone.y1)
-        // Both R and G flagged; B is not.
+        assertEquals(80, zone.x1); assertEquals(80, zone.y1)
         assertEquals(1f, zone.channels[0], 0.001f)
-        assertEquals(1f, zone.channels[1], 0.001f)
+        assertEquals(0f, zone.channels[1], 0.001f)
         assertEquals(0f, zone.channels[2], 0.001f)
-        // Initial dim = mean(globalDim[R], globalDim[G]) = (0.10 + 0.30) / 2 = 0.20.
-        assertEquals(0.20f, zone.dim, 0.001f)
+        assertEquals(0.10f, zone.dim, 0.001f)  // globalDim[R]
+    }
+
+    @Test
+    fun rectBboxFromMarks_returns_null_when_no_active_channel_paint_in_rect() {
+        val bmp = blank(200, 200)
+        // Only G paint inside rect; activeChannel = R.
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.GREEN)
+        val gd = floatArrayOf(0.10f, 0.20f, 0.30f)
+        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 150, 150, gd,
+            activeChannel = 0, existingZones = emptyList())
+        assertNull(zone)
+    }
+
+    @Test
+    fun rectBboxFromMarks_rejects_when_overlaps_same_channel_zone() {
+        val bmp = blank(200, 200)
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.RED)
+        val gd = floatArrayOf(0.10f, 0.20f, 0.30f)
+        // Existing R zone at 30..90 overlaps with the new bbox 40..80.
+        val existing = listOf(Zone(30, 30, 90, 90, 0.10f, floatArrayOf(1f, 0f, 0f)))
+        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 150, 150, gd,
+            activeChannel = 0, existingZones = existing)
+        assertNull("must reject — overlaps existing R zone", zone)
+    }
+
+    @Test
+    fun rectBboxFromMarks_succeeds_when_overlaps_different_channel_zone() {
+        val bmp = blank(200, 200)
+        for (y in 50..70) for (x in 50..70) bmp.setPixel(x, y, Color.RED)
+        val gd = floatArrayOf(0.10f, 0.20f, 0.30f)
+        // Existing G zone at the same spot — different channel, no rejection.
+        val existing = listOf(Zone(30, 30, 90, 90, 0.20f, floatArrayOf(0f, 1f, 0f)))
+        val zone = Zones.rectBboxFromMarks(bmp, 30, 30, 150, 150, gd,
+            activeChannel = 0, existingZones = existing)
+        assertNotNull("must succeed — only same-channel collisions reject", zone)
     }
 
     @Test
@@ -176,7 +212,8 @@ class ZonesTest {
         // Blob in the corner so 10px pad would go negative.
         for (y in 0..5) for (x in 0..5) bmp.setPixel(x, y, Color.GREEN)
         val gd = floatArrayOf(0.08f, 0.08f, 0.08f)
-        val zone = Zones.rectBboxFromMarks(bmp, 0, 0, 50, 50, gd)
+        val zone = Zones.rectBboxFromMarks(bmp, 0, 0, 50, 50, gd,
+            activeChannel = 1, existingZones = emptyList())
         assertNotNull(zone)
         zone!!
         assertEquals(0, zone.x0); assertEquals(0, zone.y0)

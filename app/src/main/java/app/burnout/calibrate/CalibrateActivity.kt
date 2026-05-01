@@ -638,7 +638,13 @@ class CalibrateActivity : AppCompatActivity() {
             cancelAddMode()
             return
         }
-        val zone = Zones.rectBboxFromMarks(bmp, rx0, ry0, rx1, ry1, state.globalDim)
+        // Phase 2 stub: pass current activeChannel + zones; Phase 4 wires the proper W-mode guard
+        // so this codepath isn't reached in W (where activeChannel == 3 would throw the require()).
+        val zone = Zones.rectBboxFromMarks(
+            bmp, rx0, ry0, rx1, ry1, state.globalDim,
+            activeChannel = state.activeChannel.coerceIn(0, 2),
+            existingZones = state.zones,
+        )
         if (zone == null) {
             Toast.makeText(this, R.string.calibrate_add_no_marks, Toast.LENGTH_SHORT).show()
             cancelAddMode()

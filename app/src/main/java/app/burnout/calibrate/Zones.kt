@@ -290,50 +290,55 @@ object Zones {
             else             -> 4
         }
 
+    /**
+     * Build a single-channel zone from marks of `activeChannel` within the user's rectangle.
+     * Returns null if either:
+     *   - no pixels in the rect carry paint of `activeChannel`, OR
+     *   - the resulting padded bbox intersects any existing zone owning `activeChannel`
+     *     (same-channel overlap is forbidden by the per-channel-zones invariant).
+     * Cross-channel overlap is allowed — an R zone may share its bbox with a G or B zone.
+     */
     fun rectBboxFromMarks(
         mask: Bitmap,
         rx0: Int, ry0: Int, rx1: Int, ry1: Int,
         globalDim: FloatArray,
+        activeChannel: Int,
+        existingZones: List<Zone>,
     ): Zone? {
+        require(activeChannel in 0..2) { "activeChannel must be 0..2 (R/G/B); got $activeChannel" }
         val w = mask.width; val h = mask.height
         val sx0 = minOf(rx0, rx1).coerceIn(0, w - 1)
         val sx1 = maxOf(rx0, rx1).coerceIn(0, w - 1)
         val sy0 = minOf(ry0, ry1).coerceIn(0, h - 1)
         val sy1 = maxOf(ry0, ry1).coerceIn(0, h - 1)
+        val shift = when (activeChannel) { 0 -> 16; 1 -> 8; else -> 0 }
+
         var minX = Int.MAX_VALUE; var minY = Int.MAX_VALUE
         var maxX = Int.MIN_VALUE; var maxY = Int.MIN_VALUE
-        var hasR = false; var hasG = false; var hasB = false
         for (y in sy0..sy1) {
             for (x in sx0..sx1) {
-                val px = mask.getPixel(x, y)
-                val r = (px shr 16) and 0xFF
-                val g = (px shr  8) and 0xFF
-                val b =  px         and 0xFF
-                if ((r or g or b) == 0) continue
+                val v = (mask.getPixel(x, y) shr shift) and 0xFF
+                if (v == 0) continue
                 if (x < minX) minX = x; if (x > maxX) maxX = x
                 if (y < minY) minY = y; if (y > maxY) maxY = y
-                if (r != 0) hasR = true
-                if (g != 0) hasG = true
-                if (b != 0) hasB = true
             }
         }
         if (minX == Int.MAX_VALUE) return null
+
         val bx0 = (minX - PAD).coerceAtLeast(0)
         val by0 = (minY - PAD).coerceAtLeast(0)
         val bx1 = (maxX + PAD).coerceAtMost(w - 1)
         val by1 = (maxY + PAD).coerceAtMost(h - 1)
-        val channels = floatArrayOf(
-            if (hasR) 1f else 0f,
-            if (hasG) 1f else 0f,
-            if (hasB) 1f else 0f,
-        )
-        // Initial dim: average of globalDim entries for the present channels.
-        // The user always tunes dim afterwards; this just gives a sensible non-zero starting point.
-        var sum = 0f; var count = 0
-        if (hasR) { sum += globalDim[0]; count++ }
-        if (hasG) { sum += globalDim[1]; count++ }
-        if (hasB) { sum += globalDim[2]; count++ }
-        val initialDim = if (count > 0) sum / count else globalDim[0]
-        return Zone(bx0, by0, bx1, by1, initialDim, channels)
+
+        // Same-channel overlap reject.
+        for (z in existingZones) {
+            if (z.channels[activeChannel] < 0.5f) continue
+            val sep = bx1 < z.x0 || z.x1 < bx0 || by1 < z.y0 || z.y1 < by0
+            if (!sep) return null
+        }
+
+        val channels = floatArrayOf(0f, 0f, 0f)
+        channels[activeChannel] = 1f
+        return Zone(bx0, by0, bx1, by1, globalDim[activeChannel], channels)
     }
 }
