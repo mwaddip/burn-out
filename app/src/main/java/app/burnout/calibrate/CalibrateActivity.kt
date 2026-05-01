@@ -46,13 +46,16 @@ class CalibrateActivity : AppCompatActivity() {
     private lateinit var cornerOverlay: CornerOverlayView
     private lateinit var addBanner: TextView
 
+    // Index = activeChannel for indices 0..2 (R/G/B); index 3 = W (white BG, full-preview view).
+    // bgIndex and state.activeChannel stay in lockstep — see setActiveChannel().
     private val bgPalette = intArrayOf(
-        0xFFFFFFFF.toInt(), 0xFF808080.toInt(),
-        0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFF0000FF.toInt(),
-        0xFF000000.toInt(),
+        0xFFFF0000.toInt(),  // 0 — R
+        0xFF00FF00.toInt(),  // 1 — G
+        0xFF0000FF.toInt(),  // 2 — B
+        0xFFFFFFFF.toInt(),  // 3 — W
     )
-    private val bgLabels = arrayOf("white", "gray", "red", "green", "blue", "black")
-    private var bgIndex = 0
+    private val bgLabels = arrayOf("red", "green", "blue", "white")
+    private var bgIndex = 3  // start in W
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,9 +132,10 @@ class CalibrateActivity : AppCompatActivity() {
             state.maskBitmap = bmp
             runOnUiThread {
                 state.pendingMask = bmp
-                syncSliderToSelectedZone()
-                updateStatus()
-                updateZoneButtonStates()
+                // setActiveChannel handles bg/activeChannel sync, slider/label refresh, mode-UI
+                // enable states, status line, zone buttons, and a render request — wiring everything
+                // to the current bgIndex (= W on first launch).
+                setActiveChannel(bgIndex)
                 refreshMaxBucketPresent()
             }
         }
@@ -346,15 +350,17 @@ class CalibrateActivity : AppCompatActivity() {
                 state.maskBitmap?.let { it.copy(it.config ?: Bitmap.Config.ARGB_8888, false) }
             }
             override fun snapshotMeta() = synchronized(maskLock) {
-                // TCP protocol still exposes a single global_dim — broadcast the max of the per-channel
-                // values so the desktop editor sees the most informative number until protocol catches up.
+                // TCP protocol exposes a single global_dim scalar — project the active-channel
+                // value (or the max in W) so the desktop editor sees a stable number.
+                val gd = if (state.activeChannel in 0..2) state.globalDim[state.activeChannel]
+                         else maxOf(state.globalDim[0], state.globalDim[1], state.globalDim[2])
                 MaskServer.MetaSnapshot(
                     state.maskWidth, state.maskHeight,
                     state.zones.toList(),
                     state.selectedZone,
                     state.maxWearR, state.maxWearG, state.maxWearB,
                     state.falloffRadiusPx,
-                    maxOf(state.globalDim[0], state.globalDim[1], state.globalDim[2]),
+                    gd,
                 )
             }
             override fun applyPixelEdits(edits: List<MaskServer.PixelEdit>) {
@@ -398,11 +404,15 @@ class CalibrateActivity : AppCompatActivity() {
                 runOnUiThread { updateStatus() }
             }
             override fun setGlobalDim(value: Float) {
-                // Legacy TCP protocol takes a scalar — broadcast to all RGB channels.
                 val v = value.coerceIn(0f, 1f)
-                state.globalDim = floatArrayOf(v, v, v)
+                if (state.activeChannel in 0..2) {
+                    state.globalDim[state.activeChannel] = v
+                } else {
+                    // W mode — broadcast to keep the desktop-editor scalar protocol meaningful.
+                    state.globalDim = floatArrayOf(v, v, v)
+                }
                 runOnUiThread {
-                    syncGlobalDimSliders()
+                    syncGlobalDimSlider()
                     updateStatus()
                 }
             }
@@ -457,30 +467,42 @@ class CalibrateActivity : AppCompatActivity() {
             })
         }
 
-        // Per-channel globalDim: three independent sliders (R / G / B).
-        wireGlobalDimSlider(0, R.id.seek_global_dim_r)
-        wireGlobalDimSlider(1, R.id.seek_global_dim_g)
-        wireGlobalDimSlider(2, R.id.seek_global_dim_b)
+        // Single global-dim slider — bound dynamically to globalDim[activeChannel] in non-W modes.
+        // In W mode the slider is disabled (updateModeUiEnabledStates).
+        findViewById<SeekBar>(R.id.seek_global_dim).apply {
+            this.max = 200
+            progress = (state.globalDim[bgIndex.coerceIn(0, 2)] * 200f).toInt().coerceIn(0, 200)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, v: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    if (isWMode()) return
+                    state.globalDim[state.activeChannel] = v * 0.005f
+                    syncGlobalDimLabel()
+                    updateStatus()
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        }
         lblGlobalDim = findViewById(R.id.lbl_global_dim)
 
         val btnBg = findViewById<Button>(R.id.btn_bg)
         btnBg.text = "BG: ${bgLabels[bgIndex]}"
         btnBg.setOnClickListener {
-            bgIndex = (bgIndex + 1) % bgPalette.size
-            state.bgColor = bgPalette[bgIndex]
-            btnBg.text = "BG: ${bgLabels[bgIndex]}"
-            updateStatus()
+            setActiveChannel((bgIndex + 1) % bgPalette.size)
         }
 
         btnZone = findViewById(R.id.btn_zone)
         btnZone.setOnClickListener {
-            val n = state.zones.size
-            if (n > 0) {
-                state.selectedZone = (state.selectedZone + 1) % n
-                syncSliderToSelectedZone()
-                updateStatus()
-                updateZoneButtonStates()
-            }
+            if (isWMode()) return@setOnClickListener
+            val filtered = CorrectionRenderer.filterByChannel(state.zones, state.activeChannel)
+            if (filtered.isEmpty()) return@setOnClickListener
+            val curIdxInFiltered = filtered.indexOfFirst { state.zones.indexOf(it) == state.selectedZone }
+            val nextIdxInFiltered = if (curIdxInFiltered < 0) 0 else (curIdxInFiltered + 1) % filtered.size
+            state.selectedZone = state.zones.indexOf(filtered[nextIdxInFiltered])
+            syncSliderToSelectedZone()
+            updateStatus()
+            updateZoneButtonStates()
         }
 
         findViewById<Button>(R.id.btn_ab).apply {
@@ -505,44 +527,101 @@ class CalibrateActivity : AppCompatActivity() {
         }
     }
 
-    private fun wireGlobalDimSlider(channelIdx: Int, seekId: Int) {
-        findViewById<SeekBar>(seekId).apply {
-            this.max = 200
-            progress = (state.globalDim[channelIdx] * 200f).toInt().coerceIn(0, 200)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, v: Int, fromUser: Boolean) {
-                    if (fromUser) {
-                        state.globalDim[channelIdx] = v * 0.005f
-                        updateStatus()
-                    }
-                }
-                override fun onStartTrackingTouch(s: SeekBar?) {}
-                override fun onStopTrackingTouch(s: SeekBar?) {}
-            })
-        }
+    /**
+     * Cycle to the next mode (R → G → B → W → R). Updates state.activeChannel + state.bgColor,
+     * snaps state.selectedZone to the first same-channel zone (or 0 if none), and refreshes UI.
+     */
+    private fun setActiveChannel(channelIdx: Int) {
+        bgIndex = channelIdx.coerceIn(0, 3)
+        state.activeChannel = bgIndex
+        state.bgColor = bgPalette[bgIndex]
+
+        val filtered = CorrectionRenderer.filterByChannel(state.zones, state.activeChannel)
+        state.selectedZone = if (filtered.isEmpty()) 0
+            else state.zones.indexOf(filtered[0]).coerceAtLeast(0)
+
+        findViewById<Button>(R.id.btn_bg)?.text = "BG: ${bgLabels[bgIndex]}"
+        syncSliderToSelectedZone()
+        syncGlobalDimSlider()
+        updateModeUiEnabledStates()
+        updateStatus()
+        updateZoneButtonStates()
+        glView.requestRender()
     }
 
-    private fun syncGlobalDimSliders() {
-        listOf(0 to R.id.seek_global_dim_r, 1 to R.id.seek_global_dim_g, 2 to R.id.seek_global_dim_b).forEach { (idx, id) ->
-            findViewById<SeekBar>(id)?.progress = (state.globalDim[idx] * 200f).toInt().coerceIn(0, 200)
+    private fun isWMode(): Boolean = state.activeChannel == 3
+
+    private fun updateModeUiEnabledStates() {
+        val w = isWMode()
+        findViewById<Button>(R.id.btn_zone)?.isEnabled = !w
+        findViewById<Button>(R.id.btn_zone_add)?.isEnabled = !w
+        findViewById<Button>(R.id.btn_zone_del)?.isEnabled = !w
+        findViewById<Button>(R.id.btn_zone_split)?.isEnabled = !w
+        findViewById<Button>(R.id.btn_ab)?.isEnabled = !w
+        findViewById<Button>(R.id.btn_tune_severity)?.isEnabled = !w
+        findViewById<SeekBar>(R.id.seek_dim)?.isEnabled = !w
+        findViewById<SeekBar>(R.id.seek_global_dim)?.isEnabled = !w
+        findViewById<SeekBar>(R.id.seek_radius)?.isEnabled = !w
+        // Always enabled: btn_bg, btn_save, btn_export.
+        if (!w) updateZoneButtonStates()  // restores nuanced enabled states for zone buttons in non-W
+    }
+
+    private fun syncGlobalDimSlider() {
+        if (isWMode()) return
+        val ch = state.activeChannel.coerceIn(0, 2)
+        findViewById<SeekBar>(R.id.seek_global_dim)?.progress =
+            (state.globalDim[ch] * 200f).toInt().coerceIn(0, 200)
+        syncGlobalDimLabel()
+    }
+
+    private fun syncGlobalDimLabel() {
+        if (!::lblGlobalDim.isInitialized) return
+        val ch = state.activeChannel
+        lblGlobalDim.text = if (ch in 0..2) {
+            val name = bgLabels[ch].uppercase().take(1)
+            "global dim %s: %.3f".format(Locale.US, name, state.globalDim[ch])
+        } else {
+            "global dim R/G/B: %.3f / %.3f / %.3f".format(Locale.US,
+                state.globalDim[0], state.globalDim[1], state.globalDim[2])
         }
     }
 
     private fun updateStatus() {
         val on = if (state.correctionOn) "ON" else "OFF"
-        val zoneInfo = if (state.zones.isEmpty()) "no zones" else
-            "zone ${state.selectedZone + 1}/${state.zones.size} dim=${"%.3f".format(Locale.US, selectedZoneDim())}"
-        val gd = "%.3f/%.3f/%.3f".format(Locale.US, state.globalDim[0], state.globalDim[1], state.globalDim[2])
-        statusLine.text = "$on • bg=${bgLabels[bgIndex]} • $zoneInfo • g=$gd"
+        val mode = bgLabels[bgIndex].uppercase().take(1)  // R / G / B / W
+        val filtered = CorrectionRenderer.filterByChannel(state.zones, state.activeChannel)
+        val zoneInfo = when {
+            isWMode() -> "preview (${state.zones.size} zones total)"
+            filtered.isEmpty() -> "no $mode zones"
+            else -> {
+                val pos = filtered.indexOfFirst { state.zones.indexOf(it) == state.selectedZone }
+                    .coerceAtLeast(0)
+                val sel = filtered[pos]
+                "$mode: zone ${pos + 1}/${filtered.size} dim=${"%.3f".format(Locale.US, sel.dim)}"
+            }
+        }
+        val gdLine = if (isWMode())
+            "g=%.3f/%.3f/%.3f".format(Locale.US, state.globalDim[0], state.globalDim[1], state.globalDim[2])
+        else
+            "g[$mode]=%.3f".format(Locale.US, state.globalDim[state.activeChannel])
+
+        statusLine.text = "$on • bg=${bgLabels[bgIndex]} • $zoneInfo • $gdLine"
+
         if (::btnZone.isInitialized) {
-            btnZone.text = if (state.zones.isEmpty()) "ZONE: —" else "ZONE: ${state.selectedZone + 1}/${state.zones.size}"
+            btnZone.text = when {
+                isWMode() -> "ZONE"
+                filtered.isEmpty() -> "ZONE: —"
+                else -> {
+                    val pos = filtered.indexOfFirst { state.zones.indexOf(it) == state.selectedZone }
+                        .coerceAtLeast(0)
+                    "ZONE: ${pos + 1}/${filtered.size}"
+                }
+            }
         }
         if (::lblRadius.isInitialized) {
             lblRadius.text = "falloff radius: ${state.falloffRadiusPx.toInt()}px"
         }
-        if (::lblGlobalDim.isInitialized) {
-            lblGlobalDim.text = "global dim R/G/B: $gd"
-        }
+        syncGlobalDimLabel()
     }
 
     private fun enterImmersiveMode() {
@@ -593,17 +672,24 @@ class CalibrateActivity : AppCompatActivity() {
     }
 
     private fun updateZoneButtonStates() {
-        val n = state.zones.size
-        val atCap = n >= CorrectionState.MAX_ZONES
-        val haveSelected = n > 0
+        if (isWMode()) {
+            // W mode: updateModeUiEnabledStates already disabled all zone buttons.
+            return
+        }
+        val filtered = CorrectionRenderer.filterByChannel(state.zones, state.activeChannel)
+        val totalAtCap = state.zones.size >= CorrectionState.MAX_ZONES
+        val haveSameChannelSelected = filtered.isNotEmpty() &&
+            state.zones.getOrNull(state.selectedZone)?.let {
+                it.channels[state.activeChannel] >= 0.5f
+            } == true
         val bmp = state.maskBitmap
-        val canSplit = if (haveSelected && bmp != null && !atCap) {
-            Zones.canSplitZone(bmp, state.zones[state.selectedZone.coerceIn(0, n - 1)])
-        } else false
+        val canSplit = haveSameChannelSelected && bmp != null && !totalAtCap &&
+            Zones.canSplitZone(bmp, state.zones[state.selectedZone])
 
-        findViewById<Button>(R.id.btn_zone_add)?.isEnabled = !atCap || addState != AddState.IDLE
-        findViewById<Button>(R.id.btn_zone_del)?.isEnabled = haveSelected
+        findViewById<Button>(R.id.btn_zone_add)?.isEnabled = !totalAtCap || addState != AddState.IDLE
+        findViewById<Button>(R.id.btn_zone_del)?.isEnabled = haveSameChannelSelected
         findViewById<Button>(R.id.btn_zone_split)?.isEnabled = canSplit
+        findViewById<Button>(R.id.btn_zone)?.isEnabled = filtered.isNotEmpty()
     }
 
     private fun handleAddTap(viewX: Float, viewY: Float) {
@@ -638,15 +724,17 @@ class CalibrateActivity : AppCompatActivity() {
             cancelAddMode()
             return
         }
-        // Phase 2 stub: pass current activeChannel + zones; Phase 4 wires the proper W-mode guard
-        // so this codepath isn't reached in W (where activeChannel == 3 would throw the require()).
+        if (isWMode()) { cancelAddMode(); return }
         val zone = Zones.rectBboxFromMarks(
             bmp, rx0, ry0, rx1, ry1, state.globalDim,
-            activeChannel = state.activeChannel.coerceIn(0, 2),
+            activeChannel = state.activeChannel,
             existingZones = state.zones,
         )
         if (zone == null) {
-            Toast.makeText(this, R.string.calibrate_add_no_marks, Toast.LENGTH_SHORT).show()
+            val chName = bgLabels[state.activeChannel].uppercase().take(1)
+            Toast.makeText(this,
+                "no $chName marks in rect, or overlaps existing $chName zone",
+                Toast.LENGTH_SHORT).show()
             cancelAddMode()
             return
         }

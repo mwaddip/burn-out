@@ -60,6 +60,33 @@ class CalibrateActivityTest {
     }
 
     @Test
+    fun activeChannel_filter_in_r_mode_yields_only_r_zones() {
+        val state = CorrectionState()
+        state.zones = listOf(
+            Zone(0, 0, 10, 10, 0.1f, floatArrayOf(1f, 0f, 0f)),    // R
+            Zone(20, 0, 30, 10, 0.1f, floatArrayOf(0f, 1f, 0f)),   // G
+            Zone(40, 0, 50, 10, 0.1f, floatArrayOf(0f, 0f, 1f)),   // B
+            Zone(60, 0, 70, 10, 0.1f, floatArrayOf(1f, 0f, 0f)),   // R
+        )
+        state.activeChannel = 0  // R
+        val r = CorrectionRenderer.filterByChannel(state.zones, state.activeChannel)
+        assertEquals(2, r.size)
+        assertEquals(0, r[0].x0); assertEquals(60, r[1].x0)
+    }
+
+    @Test
+    fun activeChannel_filter_in_w_mode_returns_all_zones() {
+        val state = CorrectionState()
+        state.zones = listOf(
+            Zone(0, 0, 10, 10, 0.1f, floatArrayOf(1f, 0f, 0f)),
+            Zone(20, 0, 30, 10, 0.1f, floatArrayOf(0f, 1f, 0f)),
+        )
+        state.activeChannel = 3  // W
+        val all = CorrectionRenderer.filterByChannel(state.zones, state.activeChannel)
+        assertEquals(2, all.size)
+    }
+
+    @Test
     fun thirteenth_zone_in_json_is_dropped() {
         val obj = JSONObject()
         obj.put("mask_w", 100).put("mask_h", 100)
