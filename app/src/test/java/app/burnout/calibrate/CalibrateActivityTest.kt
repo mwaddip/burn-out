@@ -16,7 +16,7 @@ class CalibrateActivityTest {
     fun saveLive_payload_uses_locale_us_decimals() {
         val s = CorrectionState()
         s.maskWidth = 1440; s.maskHeight = 3168
-        s.zones = listOf(Zone(100, 200, 300, 400, 0.195f))
+        s.zones = listOf(Zone(100, 200, 300, 400, 0.195f, floatArrayOf(1f, 0f, 0f)))
         s.falloffRadiusPx = 250f
         s.globalDim = floatArrayOf(0.07f, 0.07f, 0.07f)
         val json = s.toJson()
@@ -40,7 +40,9 @@ class CalibrateActivityTest {
         val orig = CorrectionState()
         orig.maskWidth = 1440; orig.maskHeight = 3168
         orig.zones = (0 until 12).map { i ->
-            Zone(i * 100, i * 200, i * 100 + 50, i * 200 + 50, 0.05f + i * 0.01f)
+            // Cycle channels R/G/B per index so all three appear; bboxes don't overlap (different x).
+            val ch = floatArrayOf(0f, 0f, 0f); ch[i % 3] = 1f
+            Zone(i * 100, i * 200, i * 100 + 50, i * 200 + 50, 0.05f + i * 0.01f, ch)
         }
         orig.falloffRadiusPx = 275f
         orig.globalDim = floatArrayOf(0.09f, 0.06f, 0.03f)
@@ -61,11 +63,16 @@ class CalibrateActivityTest {
     fun thirteenth_zone_in_json_is_dropped() {
         val obj = JSONObject()
         obj.put("mask_w", 100).put("mask_h", 100)
-            .put("falloff_radius_px", 0).put("global_dim", 0.0)
+            .put("falloff_radius_px", 0)
+            .put("global_dim", org.json.JSONArray().put(0.0).put(0.0).put(0.0))
+            .put("max_wear_per_channel", JSONObject().put("r", 0).put("g", 0).put("b", 0))
+            .put("severity_gaps", org.json.JSONArray().put(25).put(25).put(25).put(25))
+            .put("severity_locks", org.json.JSONArray().put(false).put(false).put(false).put(false))
         val zarr = org.json.JSONArray()
         for (i in 0 until 13) {
             zarr.put(JSONObject()
-                .put("x0", i).put("y0", i).put("x1", i + 1).put("y1", i + 1).put("dim", 0.1))
+                .put("x0", i).put("y0", i).put("x1", i + 1).put("y1", i + 1).put("dim", 0.1)
+                .put("channels", org.json.JSONArray().put(1).put(0).put(0)))
         }
         obj.put("zones", zarr)
         val state = CorrectionState()

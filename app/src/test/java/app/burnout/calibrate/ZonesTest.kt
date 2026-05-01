@@ -301,7 +301,9 @@ class ZonesTest {
         val bmp = blank(200, 200)
         // Mixed: R sev-2 (127), G sev-4 (255), B nothing.
         for (y in 50..60) for (x in 50..60) bmp.setPixel(x, y, Color.argb(255, 127, 255, 0))
-        val zone = Zone(40, 40, 70, 70, 0.1f, floatArrayOf(1f, 1f, 0f))
+        // maxBucketPresent reads pixel data within the zone's bbox and ignores zone.channels;
+        // with single-channel zones the per-channel scan still reports per-channel max correctly.
+        val zone = Zone(40, 40, 70, 70, 0.1f, floatArrayOf(1f, 0f, 0f))
         val mbp = Zones.maxBucketPresent(bmp, zone)
         assertEquals(2, mbp[0])  // R sev-2
         assertEquals(4, mbp[1])  // G sev-4

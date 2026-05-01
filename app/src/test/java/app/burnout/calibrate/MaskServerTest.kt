@@ -51,37 +51,6 @@ class MaskServerTest {
     }
 
     @Test
-    fun buildMetaJson_emits_per_zone_channels_multi_channel() {
-        val rg = Zone(0, 0, 50, 50, 0.1f, floatArrayOf(1f, 1f, 0f))
-        val snapshot = MaskServer.MetaSnapshot(
-            maskW = 100, maskH = 100,
-            zones = listOf(rg), selectedZone = 0,
-            maxWearR = 1f, maxWearG = 1f, maxWearB = 0f,
-            falloffRadiusPx = 0f, globalDim = 0f,
-        )
-        val ch = MaskServer.buildMetaJson(snapshot).getJSONArray("zones").getJSONObject(0).getJSONArray("channels")
-        assertEquals(1, ch.getInt(0))
-        assertEquals(1, ch.getInt(1))
-        assertEquals(0, ch.getInt(2))
-    }
-
-    @Test
-    fun buildMetaJson_defaults_zone_channels_to_all_on() {
-        // Zone() with no explicit channels — back-compat for legacy presets.
-        val z = Zone(0, 0, 10, 10, 0.05f)
-        val snapshot = MaskServer.MetaSnapshot(
-            maskW = 100, maskH = 100,
-            zones = listOf(z), selectedZone = 0,
-            maxWearR = 0f, maxWearG = 0f, maxWearB = 0f,
-            falloffRadiusPx = 0f, globalDim = 0f,
-        )
-        val ch = MaskServer.buildMetaJson(snapshot).getJSONArray("zones").getJSONObject(0).getJSONArray("channels")
-        assertEquals(1, ch.getInt(0))
-        assertEquals(1, ch.getInt(1))
-        assertEquals(1, ch.getInt(2))
-    }
-
-    @Test
     fun buildMetaJson_emits_top_level_meta_fields() {
         val snapshot = MaskServer.MetaSnapshot(
             maskW = 1440, maskH = 3216,
