@@ -15,7 +15,7 @@ android {
         targetSdk = 36
         // Dev-install builds need versionCode > the baked-in /system/app/Burnout APK's
         // versionCode (currently 36 from the Soong build) so `adb install -r` can supersede it.
-        versionCode = 100
+        versionCode = 101
         versionName = "0.4-per-channel-zones"
     }
 
