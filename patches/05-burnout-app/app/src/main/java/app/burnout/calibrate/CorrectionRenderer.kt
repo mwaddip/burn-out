@@ -94,45 +94,67 @@ class CorrectionRenderer(
         GLES30.glUniform1i(uniforms["u_simulatePanel"]!!, if (state.simulatePanel) 1 else 0)
         GLES30.glUniform1f(uniforms["u_wearStrength"]!!, state.wearStrength)
 
-        val zones = state.zones
+        val allZones = state.zones
         val w = state.maskWidth.coerceAtLeast(1)
         val h = state.maskHeight.coerceAtLeast(1)
 
+        // Severity sevWearFraction is mode-independent — refresh first so it's available below.
+        val frac = state.sevWearFraction()
+        for (i in 0..4) sevWearFraction[i] = frac[i]
+
+        // Pre-zero slot arrays — entries beyond filteredCount are dead but the shader's looped
+        // uniform fetches still touch them; zero is safe (zoneWeight on an empty bbox returns 0).
         for (i in 0 until CorrectionState.MAX_ZONES) {
-            val z = zones.getOrNull(i)
-            zonesUv[i * 4 + 0] = (z?.x0 ?: 0).toFloat() / w
-            zonesUv[i * 4 + 1] = (z?.y0 ?: 0).toFloat() / h
-            zonesUv[i * 4 + 2] = (z?.x1 ?: 0).toFloat() / w
-            zonesUv[i * 4 + 3] = (z?.y1 ?: 0).toFloat() / h
-            zonesDim[i] = z?.dim ?: 0f
-            val ch = z?.channels
-            zonesChannels[i * 3 + 0] = ch?.getOrElse(0) { 0f } ?: 0f
-            zonesChannels[i * 3 + 1] = ch?.getOrElse(1) { 0f } ?: 0f
-            zonesChannels[i * 3 + 2] = ch?.getOrElse(2) { 0f } ?: 0f
+            zonesUv[i * 4 + 0] = 0f; zonesUv[i * 4 + 1] = 0f
+            zonesUv[i * 4 + 2] = 0f; zonesUv[i * 4 + 3] = 0f
+            zonesDim[i] = 0f
+            zonesChannels[i * 3 + 0] = 0f
+            zonesChannels[i * 3 + 1] = 0f
+            zonesChannels[i * 3 + 2] = 0f
+            for (c in 0..2) zoneMaxEffWear[i * 3 + c] = 0f
         }
-        GLES30.glUniform1i(uniforms["u_zoneCount"]!!, zones.size)
+
+        // Filter by active channel; build (origIdx, zone) pairs so maxBucketPresent — indexed by
+        // original zone position — can still be looked up after the index shift.
+        val filteredWithIdx = allZones.withIndex().filter {
+            state.activeChannel !in 0..2 || it.value.channels[state.activeChannel] >= 0.5f
+        }
+        val filteredCount = filteredWithIdx.size.coerceAtMost(CorrectionState.MAX_ZONES)
+
+        for (newIdx in 0 until filteredCount) {
+            val origIdx = filteredWithIdx[newIdx].index
+            val z = filteredWithIdx[newIdx].value
+            zonesUv[newIdx * 4 + 0] = z.x0.toFloat() / w
+            zonesUv[newIdx * 4 + 1] = z.y0.toFloat() / h
+            zonesUv[newIdx * 4 + 2] = z.x1.toFloat() / w
+            zonesUv[newIdx * 4 + 3] = z.y1.toFloat() / h
+            zonesDim[newIdx] = z.dim
+            zonesChannels[newIdx * 3 + 0] = z.channels[0]
+            zonesChannels[newIdx * 3 + 1] = z.channels[1]
+            zonesChannels[newIdx * 3 + 2] = z.channels[2]
+            for (c in 0..2) {
+                val bucket = maxBucketPresent[origIdx * 3 + c].coerceIn(0, 4)
+                zoneMaxEffWear[newIdx * 3 + c] = sevWearFraction[bucket]
+            }
+        }
+
+        GLES30.glUniform1i(uniforms["u_zoneCount"]!!, filteredCount)
         GLES30.glUniform4fv(uniforms["u_zones"]!!, CorrectionState.MAX_ZONES, zonesUv, 0)
         GLES30.glUniform1fv(uniforms["u_zoneDims"]!!, CorrectionState.MAX_ZONES, zonesDim, 0)
         GLES30.glUniform3fv(uniforms["u_zoneChannels"]!!, CorrectionState.MAX_ZONES, zonesChannels, 0)
+
+        // selectedZone in state is an index into allZones; remap to the filtered position so the
+        // shader's outline highlight tracks the right zone. Out-of-range value suppresses the
+        // outline (used in W mode + when selection isn't in the active-channel filter).
+        val newSelected = filteredWithIdx.indexOfFirst { it.index == state.selectedZone }
         GLES30.glUniform1i(uniforms["u_selectedZone"]!!,
-            state.selectedZone.coerceIn(0, (zones.size - 1).coerceAtLeast(0)))
+            if (newSelected < 0) CorrectionState.MAX_ZONES else newSelected)
+
         GLES30.glUniform2f(uniforms["u_pxToUV"]!!, 1f / w, 1f / h)
         GLES30.glUniform2f(uniforms["u_maskSizePx"]!!, w.toFloat(), h.toFloat())
         GLES30.glUniform1f(uniforms["u_falloffRadiusPx"]!!, state.falloffRadiusPx)
         GLES30.glUniform3f(uniforms["u_globalDim"]!!, state.globalDim[0], state.globalDim[1], state.globalDim[2])
-
-        // Severity-aware uniforms.
-        val frac = state.sevWearFraction()
-        for (i in 0..4) sevWearFraction[i] = frac[i]
         GLES30.glUniform1fv(uniforms["u_sevWearFraction"]!!, 5, sevWearFraction, 0)
-
-        // zoneMaxEffWear: combine cached maxBucketPresent with current sevWearFraction.
-        for (i in 0 until CorrectionState.MAX_ZONES) {
-            for (c in 0..2) {
-                val bucket = maxBucketPresent[i * 3 + c].coerceIn(0, 4)
-                zoneMaxEffWear[i * 3 + c] = sevWearFraction[bucket]
-            }
-        }
         GLES30.glUniform3fv(uniforms["u_zoneMaxEffWear"]!!, CorrectionState.MAX_ZONES, zoneMaxEffWear, 0)
 
         GLES30.glEnableVertexAttribArray(aPos)
@@ -182,5 +204,16 @@ class CorrectionRenderer(
         }
         GLES30.glDeleteShader(vs); GLES30.glDeleteShader(fs)
         return p
+    }
+
+    companion object {
+        /**
+         * Filter zones to those owning the given channel. Used to scope the Calibrate preview
+         * shader to the active mode's zones. Channel 3 (W mode) returns the input list unchanged.
+         * Out-of-range channels also return the input unchanged (defensive).
+         */
+        fun filterByChannel(zones: List<Zone>, channel: Int): List<Zone> =
+            if (channel !in 0..2) zones
+            else zones.filter { it.channels[channel] >= 0.5f }
     }
 }

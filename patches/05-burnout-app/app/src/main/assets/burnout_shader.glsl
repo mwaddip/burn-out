@@ -65,35 +65,33 @@ void main() {
             u_sevWearFraction[bucket.b]
         );
 
-        float zw = 0.0;
-        float zd = 0.0;
-        vec3 zoneCh = vec3(0.0);
+        // Per-channel max-of-lerp: each output channel picks the strongest dim contribution
+        // among same-channel zones. globalDim is the floor (pixels outside any same-channel zone
+        // — or a channel whose zoneCh gate is 0 — see candidate calc unchanged: outside all bboxes
+        // both arms collapse to globalDim[c]).
+        vec3 zoneDimV = u_globalDim;
         vec3 zoneMaxEff = vec3(0.0);
         for (int i = 0; i < 12; ++i) {
             if (i >= u_zoneCount) break;
             float w = zoneWeight(v_uv, u_zones[i], u_falloffRadiusPx);
-            if (w > zw || (w == zw && u_zoneDims[i] > zd)) {
-                zw = w; zd = u_zoneDims[i];
-                zoneCh = u_zoneChannels[i];
-                zoneMaxEff = u_zoneMaxEffWear[i];
+            for (int c = 0; c < 3; ++c) {
+                if (u_zoneChannels[i][c] < 0.5) continue;
+                float candidate = mix(u_globalDim[c], u_zoneDims[i], w);
+                if (candidate > zoneDimV[c]) {
+                    zoneDimV[c] = candidate;
+                    zoneMaxEff[c] = u_zoneMaxEffWear[i][c];
+                }
             }
         }
 
-        // Severity factor: 1.0 for unmarked (or factor=1 fallback), 0.0 at zone-max-wear,
-        // linear in between. Channels with zoneMaxEff == 0 (zone has no wear in this channel)
-        // fall back to factor=1 — unmarked-style baseline behavior, gated by zoneCh below.
+        // Severity factor: 1.0 outside any zone, 0.0 at zone-max-wear, linear in between.
+        // Channels with zoneMaxEff == 0 fall back to factor=1.
         vec3 factor = clamp(
             (zoneMaxEff - effWear) / max(zoneMaxEff, vec3(1e-6)),
             vec3(0.0), vec3(1.0));
         factor = mix(vec3(1.0), factor, step(vec3(1e-6), zoneMaxEff));
 
-        vec3 zoneDimV = mix(u_globalDim, vec3(zd), zw);
-        vec3 nonZoneCh = vec3(1.0) - zoneCh;
-        // Apply factor only to the zone term; baseline (non-zone) channels stay full-strength
-        // (their globalDim is the manual rebalancing knob, unrelated to per-pixel severity).
-        vec3 dimV = clamp(
-            zoneCh * zoneDimV * factor + nonZoneCh * u_globalDim,
-            vec3(0.0), vec3(0.99));
+        vec3 dimV = clamp(zoneDimV * factor, vec3(0.0), vec3(0.99));
         outLin = lin * (vec3(1.0) - dimV);
     }
 

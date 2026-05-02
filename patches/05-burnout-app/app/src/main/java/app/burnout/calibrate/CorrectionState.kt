@@ -9,9 +9,10 @@ class Zone(
     val x0: Int, val y0: Int,
     val x1: Int, val y1: Int,
     initialDim: Float,
-    // Per-zone channel-has-wear mask (RGB), 0f or 1f per channel.
-    // Default all-channels-wearing for back-compat with legacy presets that lack the field.
-    val channels: FloatArray = floatArrayOf(1f, 1f, 1f),
+    // Per-zone channel-has-wear mask (RGB). Invariant: exactly one entry is 1f, the others 0f
+    // (single-channel ownership). Enforced at write paths (rect-add, fromJson). The Zone class
+    // itself doesn't validate — callers do — to keep the constructor cheap and side-effect-free.
+    val channels: FloatArray,
 ) {
     @Volatile var dim: Float = initialDim
     fun containsPx(px: Int, py: Int) = px in x0..x1 && py in y0..y1
@@ -39,6 +40,10 @@ class CorrectionState {
     @Volatile var maskBitmap: Bitmap? = null
     @Volatile var zones: List<Zone> = emptyList()
     @Volatile var selectedZone: Int = 0
+
+    // 0=R, 1=G, 2=B, 3=W. UI-only filter for Calibrate mode (which channel's zones the user is editing).
+    // Not persisted in JSON — defaults to 3 (W = full-preview view) at every launch / state reload.
+    @Volatile var activeChannel: Int = 3
 
     // Spec §5.1 entry defaults: falloff=300, globalDim=[0.08, 0.08, 0.08] per RGB channel.
     @Volatile var falloffRadiusPx: Float = 300f
@@ -91,30 +96,30 @@ class CorrectionState {
 
     fun fromJson(json: String) {
         val obj = JSONObject(json)
-        maskWidth = obj.optInt("mask_w", 0)
-        maskHeight = obj.optInt("mask_h", 0)
-        falloffRadiusPx = obj.optDouble("falloff_radius_px", 300.0).toFloat()
-        // Back-compat: legacy presets stored global_dim as a scalar; new ones store an RGB array.
-        val gdArr = obj.optJSONArray("global_dim")
-        if (gdArr != null && gdArr.length() == 3) {
-            globalDim = floatArrayOf(
-                gdArr.getDouble(0).toFloat(),
-                gdArr.getDouble(1).toFloat(),
-                gdArr.getDouble(2).toFloat(),
-            )
-        } else {
-            val scalar = obj.optDouble("global_dim", 0.08).toFloat()
-            globalDim = floatArrayOf(scalar, scalar, scalar)
-        }
-        val zarr = obj.optJSONArray("zones") ?: JSONArray()
+        maskWidth = obj.getInt("mask_w")
+        maskHeight = obj.getInt("mask_h")
+        falloffRadiusPx = obj.getDouble("falloff_radius_px").toFloat()
+
+        val gdArr = obj.getJSONArray("global_dim")
+        check(gdArr.length() == 3) { "global_dim must be a 3-element array" }
+        globalDim = floatArrayOf(
+            gdArr.getDouble(0).toFloat(),
+            gdArr.getDouble(1).toFloat(),
+            gdArr.getDouble(2).toFloat(),
+        )
+
+        val zarr = obj.getJSONArray("zones")
         zones = (0 until zarr.length()).map { i ->
             val z = zarr.getJSONObject(i)
-            val ch = z.optJSONArray("channels")
-            val channels = if (ch != null && ch.length() == 3) {
-                floatArrayOf(ch.getInt(0).toFloat(), ch.getInt(1).toFloat(), ch.getInt(2).toFloat())
-            } else {
-                // Legacy preset without channels — assume all channels worn (matches old global gate).
-                floatArrayOf(1f, 1f, 1f)
+            val ch = z.getJSONArray("channels")
+            check(ch.length() == 3) { "zone[$i].channels must be a 3-element array" }
+            val channels = floatArrayOf(
+                ch.getInt(0).toFloat(),
+                ch.getInt(1).toFloat(),
+                ch.getInt(2).toFloat(),
+            )
+            check(channels.sum() == 1f) {
+                "zone[$i].channels must be single-channel (one 1, two 0s); got ${channels.joinToString()}"
             }
             Zone(
                 z.getInt("x0"), z.getInt("y0"),
@@ -123,29 +128,25 @@ class CorrectionState {
                 channels,
             )
         }.take(MAX_ZONES)
-        obj.optJSONObject("max_wear_per_channel")?.let { mw ->
-            maxWearR = mw.optDouble("r", 0.0).toFloat()
-            maxWearG = mw.optDouble("g", 0.0).toFloat()
-            maxWearB = mw.optDouble("b", 0.0).toFloat()
-        }
-        // Severity tuning: defaults 25/25/25/25 + all unlocked when missing or invalid.
-        val sgArr = obj.optJSONArray("severity_gaps")
-        severityGaps = if (sgArr != null && sgArr.length() == 4) {
-            val parsed = IntArray(4) { sgArr.getInt(it) }
-            val sum = parsed.sum()
-            val inRange = parsed.all { it in 0..100 }
-            if (sum == 100 && inRange) parsed else intArrayOf(25, 25, 25, 25)
-        } else intArrayOf(25, 25, 25, 25)
 
-        val slArr = obj.optJSONArray("severity_locks")
-        severityLocks = if (slArr != null && slArr.length() == 4) {
-            BooleanArray(4) { slArr.getBoolean(it) }.also {
-                // Enforce ≥2 unlocked invariant on read; if violated, fall back to all unlocked.
-                if (it.count { locked -> !locked } < 2) {
-                    for (i in 0..3) it[i] = false
-                }
-            }
-        } else booleanArrayOf(false, false, false, false)
+        val mw = obj.getJSONObject("max_wear_per_channel")
+        maxWearR = mw.getDouble("r").toFloat()
+        maxWearG = mw.getDouble("g").toFloat()
+        maxWearB = mw.getDouble("b").toFloat()
+
+        val sgArr = obj.getJSONArray("severity_gaps")
+        check(sgArr.length() == 4) { "severity_gaps must be a 4-element array" }
+        val gaps = IntArray(4) { sgArr.getInt(it) }
+        check(gaps.all { it in 0..100 } && gaps.sum() == 100) {
+            "severity_gaps each in 0..100 with sum=100; got ${gaps.joinToString()}"
+        }
+        severityGaps = gaps
+
+        val slArr = obj.getJSONArray("severity_locks")
+        check(slArr.length() == 4) { "severity_locks must be a 4-element array" }
+        val locks = BooleanArray(4) { slArr.getBoolean(it) }
+        check(locks.count { !it } >= 2) { "severity_locks: at least 2 unlocked required" }
+        severityLocks = locks
     }
 
     companion object {
