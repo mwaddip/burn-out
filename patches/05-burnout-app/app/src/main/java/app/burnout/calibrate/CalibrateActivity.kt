@@ -15,7 +15,7 @@ import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import app.burnout.R
 import app.burnout.mark.DraggableOverlay
@@ -45,6 +45,19 @@ class CalibrateActivity : AppCompatActivity() {
     private var corner1Mask: Pair<Int, Int>? = null
     private lateinit var cornerOverlay: CornerOverlayView
     private lateinit var addBanner: TextView
+
+    private lateinit var severityPanel: View
+    private lateinit var severitySeeks: List<SeekBar>
+    private lateinit var severityVals: List<TextView>
+    private lateinit var severityLockBtns: List<ImageButton>
+    private lateinit var severitySumReadout: TextView
+    private var severityPanelSnapGaps: IntArray? = null
+    private var severityPanelSnapLocks: BooleanArray? = null
+    private var severityPanelOverlay: DraggableOverlay? = null
+
+    private val severityPanelBackCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() { hideSeverityPanel(commit = false) }
+    }
 
     // Index = activeChannel for indices 0..2 (R/G/B); index 3 = W (white BG, full-preview view).
     // bgIndex and state.activeChannel stay in lockstep — see setActiveChannel().
@@ -80,6 +93,8 @@ class CalibrateActivity : AppCompatActivity() {
         statusLine = findViewById(R.id.status_line)
         wireControls()
         wireDraggables()
+        setupSeverityPanel()
+        onBackPressedDispatcher.addCallback(this, severityPanelBackCallback)
         loadMaskAndState()
         startServer()
         updateStatus()
@@ -153,67 +168,41 @@ class CalibrateActivity : AppCompatActivity() {
     }
 
     /**
-     * Open the Tune-severity dialog: 4 sliders + per-slider lock toggles.
-     * Live preview pushes uniforms via glView.requestRender() while dragging;
-     * Cancel/back-press restores the pre-open snapshot, Done persists.
+     * Wire the (always-present, initially gone) severity panel: bind view fields, attach
+     * lock-toggle and slider listeners, attach Done/Cancel handlers. Called once in onCreate.
      */
-    private fun showSeverityDialog() {
-        val snapGaps = state.severityGaps.copyOf()
-        val snapLocks = state.severityLocks.copyOf()
-
-        val view = layoutInflater.inflate(R.layout.dialog_severity, null)
-        val seeks = listOf(
-            view.findViewById<SeekBar>(R.id.seek_01),
-            view.findViewById<SeekBar>(R.id.seek_12),
-            view.findViewById<SeekBar>(R.id.seek_23),
-            view.findViewById<SeekBar>(R.id.seek_34),
+    private fun setupSeverityPanel() {
+        severityPanel = findViewById(R.id.severity_panel)
+        severitySeeks = listOf(
+            findViewById(R.id.seek_01), findViewById(R.id.seek_12),
+            findViewById(R.id.seek_23), findViewById(R.id.seek_34),
         )
-        val vals = listOf(
-            view.findViewById<TextView>(R.id.val_01),
-            view.findViewById<TextView>(R.id.val_12),
-            view.findViewById<TextView>(R.id.val_23),
-            view.findViewById<TextView>(R.id.val_34),
+        severityVals = listOf(
+            findViewById(R.id.val_01), findViewById(R.id.val_12),
+            findViewById(R.id.val_23), findViewById(R.id.val_34),
         )
-        val lockBtns = listOf(
-            view.findViewById<ImageButton>(R.id.lock_01),
-            view.findViewById<ImageButton>(R.id.lock_12),
-            view.findViewById<ImageButton>(R.id.lock_23),
-            view.findViewById<ImageButton>(R.id.lock_34),
+        severityLockBtns = listOf(
+            findViewById(R.id.lock_01), findViewById(R.id.lock_12),
+            findViewById(R.id.lock_23), findViewById(R.id.lock_34),
         )
-        val sumReadout = view.findViewById<TextView>(R.id.sum_readout)
-
-        fun refreshAll() {
-            for (j in 0..3) {
-                if (seeks[j].progress != state.severityGaps[j]) {
-                    seeks[j].progress = state.severityGaps[j]
-                }
-                vals[j].text = state.severityGaps[j].toString()
-                lockBtns[j].setImageResource(
-                    if (state.severityLocks[j]) R.drawable.ic_lock_closed
-                    else R.drawable.ic_lock_open
-                )
-                seeks[j].isEnabled = !state.severityLocks[j]
-            }
-            sumReadout.text = getString(R.string.severity_sum_format, state.severityGaps.sum())
-        }
-        refreshAll()
+        severitySumReadout = findViewById(R.id.sum_readout)
 
         // Lock toggle handlers — enforce ≥2 unlocked.
         for (i in 0..3) {
-            lockBtns[i].setOnClickListener {
+            severityLockBtns[i].setOnClickListener {
                 val wantLock = !state.severityLocks[i]
                 if (wantLock && state.severityLocks.count { !it } <= 2) {
                     Toast.makeText(this, R.string.severity_min_unlocked, Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
                 state.severityLocks[i] = wantLock
-                refreshAll()
+                refreshSeverityPanelUi()
             }
         }
 
         // Slider drag handlers — redistribute on every progress change (live preview).
         for (i in 0..3) {
-            seeks[i].setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            severitySeeks[i].setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (!fromUser) return
                     val delta = progress - state.severityGaps[i]
@@ -221,7 +210,7 @@ class CalibrateActivity : AppCompatActivity() {
                     CorrectionState.redistributeGaps(
                         state.severityGaps, state.severityLocks,
                         changedIdx = i, delta = delta)
-                    refreshAll()
+                    refreshSeverityPanelUi()
                     glView.requestRender()
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
@@ -229,21 +218,62 @@ class CalibrateActivity : AppCompatActivity() {
             })
         }
 
-        AlertDialog.Builder(this)
-            .setTitle(R.string.severity_dialog_title)
-            .setView(view)
-            .setPositiveButton("Done") { _, _ -> /* state already mutated */ }
-            .setNegativeButton("Cancel") { _, _ ->
-                state.severityGaps = snapGaps
-                state.severityLocks = snapLocks
-                glView.requestRender()
+        findViewById<Button>(R.id.btn_severity_done).setOnClickListener {
+            hideSeverityPanel(commit = true)
+        }
+        findViewById<Button>(R.id.btn_severity_cancel).setOnClickListener {
+            hideSeverityPanel(commit = false)
+        }
+    }
+
+    private fun refreshSeverityPanelUi() {
+        for (j in 0..3) {
+            if (severitySeeks[j].progress != state.severityGaps[j]) {
+                severitySeeks[j].progress = state.severityGaps[j]
             }
-            .setOnCancelListener {
-                state.severityGaps = snapGaps
-                state.severityLocks = snapLocks
-                glView.requestRender()
-            }
-            .show()
+            severityVals[j].text = state.severityGaps[j].toString()
+            severityLockBtns[j].setImageResource(
+                if (state.severityLocks[j]) R.drawable.ic_lock_closed
+                else R.drawable.ic_lock_open
+            )
+            severitySeeks[j].isEnabled = !state.severityLocks[j]
+        }
+        severitySumReadout.text =
+            getString(R.string.severity_sum_format, state.severityGaps.sum())
+    }
+
+    /**
+     * Reveal the severity panel as a non-modal draggable overlay. Snapshot current
+     * gaps/locks so Cancel can revert. Lazy-init the DraggableOverlay on first show
+     * (the panel must be laid out for clampToScreen to use real width/height).
+     */
+    private fun showSeverityPanel() {
+        severityPanelSnapGaps = state.severityGaps.copyOf()
+        severityPanelSnapLocks = state.severityLocks.copyOf()
+        refreshSeverityPanelUi()
+        severityPanel.visibility = View.VISIBLE
+        if (severityPanelOverlay == null) {
+            severityPanelOverlay = DraggableOverlay(
+                dragTarget = severityPanel,
+                touchTarget = findViewById(R.id.severity_drag_handle),
+                id = "calibrate_severity",
+                prefs = DraggableOverlay.prefsFor(this),
+            )
+        }
+        severityPanelBackCallback.isEnabled = true
+    }
+
+    private fun hideSeverityPanel(commit: Boolean) {
+        if (!commit) {
+            severityPanelSnapGaps?.let { state.severityGaps = it }
+            severityPanelSnapLocks?.let { state.severityLocks = it }
+            refreshSeverityPanelUi()
+            glView.requestRender()
+        }
+        severityPanelSnapGaps = null
+        severityPanelSnapLocks = null
+        severityPanel.visibility = View.GONE
+        severityPanelBackCallback.isEnabled = false
     }
 
     /**
@@ -519,7 +549,7 @@ class CalibrateActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btn_save).setOnClickListener { saveLive() }
         findViewById<Button>(R.id.btn_export).setOnClickListener { exportToDownloads() }
-        findViewById<Button>(R.id.btn_tune_severity).setOnClickListener { showSeverityDialog() }
+        findViewById<Button>(R.id.btn_tune_severity).setOnClickListener { showSeverityPanel() }
         findViewById<Button>(R.id.btn_zone_del).setOnClickListener { deleteSelectedZone() }
         findViewById<Button>(R.id.btn_zone_split).setOnClickListener { splitSelectedZone() }
         findViewById<Button>(R.id.btn_zone_add).setOnClickListener {

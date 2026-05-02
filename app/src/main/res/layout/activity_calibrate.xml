@@ -154,4 +154,12 @@
                 android:text="@string/calibrate_export"/>
         </LinearLayout>
     </LinearLayout>
+
+    <include
+        layout="@layout/panel_severity"
+        android:id="@+id/severity_panel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone" />
 </FrameLayout>

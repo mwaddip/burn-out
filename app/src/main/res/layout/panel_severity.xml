@@ -1,9 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="12dp"
+    android:background="#A0000000">
+
+    <TextView
+        android:id="@+id/severity_drag_handle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textColor="#FFCCCCCC"
+        android:text="@string/severity_panel_drag_handle" />
 
     <LinearLayout
         android:id="@+id/row_01"
@@ -137,4 +146,20 @@
         android:textColor="?android:attr/textColorSecondary"
         android:textSize="12sp"
         android:text="@string/severity_sum_100"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end"
+        android:paddingTop="8dp">
+        <Button android:id="@+id/btn_severity_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/severity_panel_cancel"/>
+        <Button android:id="@+id/btn_severity_done"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/severity_panel_done"/>
+    </LinearLayout>
 </LinearLayout>

@@ -30,7 +30,9 @@
     <string name="calibrate_add_no_marks">No marks in selection — paint first</string>
     <string name="calibrate_at_cap">Zone cap reached (12)</string>
     <string name="calibrate_tune_severity">TUNE SEVERITY</string>
-    <string name="severity_dialog_title">Tune severity</string>
+    <string name="severity_panel_drag_handle">⠿  Tune severity  ⠿</string>
+    <string name="severity_panel_done">Done</string>
+    <string name="severity_panel_cancel">Cancel</string>
     <string name="severity_label_01">0→1</string>
     <string name="severity_label_12">1→2</string>
     <string name="severity_label_23">2→3</string>
