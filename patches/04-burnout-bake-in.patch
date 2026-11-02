@@ -1,9 +1,9 @@
 diff --git a/burnout/burnout.mk b/burnout/burnout.mk
 new file mode 100644
-index 00000000..b7736870
+index 00000000..081d1c06
 --- /dev/null
 +++ b/burnout/burnout.mk
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,33 @@
 +# Burn-out compensation — factory bake-in target (multi-device template).
 +#
 +# Include this from your device's makefile after setting BURNOUT_FB_WIDTH and
@@ -28,11 +28,12 @@ index 00000000..b7736870
 +$(error BURNOUT_FB_HEIGHT not set; set it to your device's framebuffer height before including burnout.mk)
 +endif
 +
-+BURNOUT_LOCAL_PATH := $(call my-dir)
-+
++# Path is hardcoded because $(call my-dir) returns empty under Soong product-config
++# evaluation when this file is consumed via plain `include` from a device.mk. This
++# template always lives at vendor/lineage/burnout/, so hardcoding is safe.
 +PRODUCT_COPY_FILES += \
-+    $(BURNOUT_LOCAL_PATH)/factory/mask.png:system/etc/burnout/mask.png \
-+    $(BURNOUT_LOCAL_PATH)/factory/zones.json:system/etc/burnout/zones.json
++    vendor/lineage/burnout/factory/mask.png:system/etc/burnout/mask.png \
++    vendor/lineage/burnout/factory/zones.json:system/etc/burnout/zones.json
 +
 +# Bundle the Burn-out system app (platform-signed, /system/app/Burnout/).
 +PRODUCT_PACKAGES += Burnout
